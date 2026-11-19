@@ -1,0 +1,9 @@
+.cache/
+exports/
+node_modules/
+.env
+.env.*
+*.log
+*.pem
+*.key
+*.pfx
