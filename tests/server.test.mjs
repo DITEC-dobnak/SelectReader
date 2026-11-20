@@ -74,17 +74,21 @@ test('Reader controls require local Origin and protect an active export',async t
   assert.deepEqual(exits,['restart']);
 });
 
-test('last presence disconnect waits through export and reconnect cancels idle shutdown',async t=>{
+test('silent or sleeping tabs survive idle timeout; only explicit last leave schedules shutdown',async t=>{
   const exits=[],job={state:{active:true}};
-  const {base}=await setup(t,{idleMs:80,onExit:cmd=>exits.push(cmd),markdownExport:job});
+  const {base,post}=await setup(t,{idleMs:80,onExit:cmd=>exits.push(cmd),markdownExport:job});
   const wait=ms=>new Promise(r=>setTimeout(r,ms));
-  const connect=async()=>{
-    const res=await fetch(`${base}/api/presence`,{headers:{'Sec-Fetch-Site':'same-origin'}});
+  const connect=async(view=crypto.randomUUID())=>{
+    const res=await fetch(`${base}/api/state?view=${view}`,{headers:{'Sec-Fetch-Site':'same-origin',Connection:'close'}});
     assert.equal(res.status,200);
-    return ()=>res.body.cancel();
+    await res.json();
+    return ()=>post('/api/reader/leave',{view},{Origin:base});
   };
-  const a=await connect(), b=await connect();
+  job.state.active=false;
+  const view=crypto.randomUUID(), a=await connect(), b=await connect(view);
   await a();await wait(120);assert.deepEqual(exits,[]);
+  await connect(view);
+  job.state.active=true;
   await b();await wait(120);assert.deepEqual(exits,[]);
   const c=await connect();job.state.active=false;
   await wait(120);assert.deepEqual(exits,[]);
@@ -122,6 +126,7 @@ test('only a locally chosen export destination can override the default; cancell
     folderPicker: async () => choices.shift(),
     markdownExport: { base: 'default', state: { phase: 'idle' }, start: (_, resume, folder) => calls.push(folder) },
   });
+
   const origin = { Origin: base };
   assert.equal((await post('/api/export/folder', {})).status, 403);
   assert.equal((await post('/api/export/start', { folder: chosen }, origin)).status, 400);
@@ -130,6 +135,21 @@ test('only a locally chosen export destination can override the default; cancell
   assert.equal((await post('/api/export/start', { folder: chosen }, origin)).status, 202);
   assert.equal((await post('/api/export/start', {}, origin)).status, 202);
   assert.deepEqual(calls, [chosen, 'default']);
+});
+
+test('open export folder uses the default or the picker choice even during export', async t => {
+  const calls = [], chosen = 'D:\\Výstupy modelov', job = {base:'default',state:{active:false}};
+  const { base, post } = await setup(t, {
+    markdownExport:job, folderPicker:async()=>chosen, folderOpener:async(...args)=>calls.push(args),
+  });
+  const headers = {Origin:base}, route = '/api/export/open-folder';
+  assert.equal((await post(route,{})).status,403);
+  assert.equal((await post(route,{folder:chosen},headers)).status,400);
+  assert.equal((await post(route,{},headers)).status,200);
+  await post('/api/export/folder',{},headers);
+  job.state.active=true;
+  assert.equal((await post(route,{folder:chosen},headers)).status,200);
+  assert.deepEqual(calls,[['default',true],[chosen,false]]);
 });
 
 test('Windows identity metadata is explicit about process ownership and local versus domain accounts', () => {
@@ -363,6 +383,38 @@ test('keeps existing offline copies, search and stored diagrams usable without a
   response = await fetch(`${base}/api/item/${diagram.id}?refresh=1`);
   assert.equal(response.status, 409);
   assert.deepEqual(await cache.load(selection), snapshot);
+});
+
+test('opening a native local copy reads only missing details online and persists them for later offline use', async t => {
+  const target = { ...selection, modelId: '00010002000000ff' };
+  const entry = { ...diagram, nativeClass: '_Ent2_UseCaseDiagram', nativeId: '0001000200000001' };
+  const result = snapshot.details[0][1];
+  let calls = 0, available = false;
+  const { base, post, cache } = await setup(t, {
+    nativeCatalog: () => assert.fail('Unexpected catalog load'),
+    nativeDetail: async (selected, object, context) => {
+      calls++;
+      assert.deepEqual(selected, target);
+      assert.deepEqual(object, entry);
+      assert.equal(context, null);
+      if (!available) throw Object.assign(new Error('Server nie je dostupný.'), { status: 503 });
+      return result;
+    },
+  });
+  const original = { ...snapshot, selection: target, entries: [entry, item], details: [] };
+  await cache.save(original);
+  const open = () => post('/api/open', { ...target, offline: true }, { Origin: base });
+  const read = () => fetch(`${base}/api/item/${entry.id}`);
+  assert.equal((await open()).status, 200);
+  assert.equal(calls, 0);
+  assert.equal((await read()).status, 503);
+  assert.deepEqual(await cache.load(target), original);
+  available = true;
+  assert.deepEqual((await (await read()).json()).detail, result);
+  available = false;
+  assert.equal((await open()).status, 200);
+  assert.equal((await (await read()).json()).detail.cached, true);
+  assert.equal(calls, 2);
 });
 
 test('failed offline selection preserves the previously opened copy', async t => {

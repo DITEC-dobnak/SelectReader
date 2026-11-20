@@ -14,20 +14,26 @@ $('theme-toggle').addEventListener('click', () => {
 });
 systemTheme.addEventListener('change', applyTheme);
 applyTheme();
-  function setupDivider(id, paneId, variable, direction) {
-    const divider = $(id), pane = $(paneId), key = `select-reader:${variable}`;
-    const stored = Number(localStorage.getItem(key));
-    const setWidth = width => document.documentElement.style.setProperty(variable, `${width}px`);
-    if (Number.isFinite(stored) && stored > 0) setWidth(stored);
-    const width = () => Math.round(pane.getBoundingClientRect().width);
+  function setupDivider(id, paneId, variable, direction, scope=document.documentElement, suffix='') {
+    const divider = $(id), pane = $(paneId);
+    const bottom = () => divider.getAttribute('aria-orientation') === 'horizontal';
+    const sizeVar = () => bottom() ? '--inspector-height' : variable;
+    const key = name => `select-reader:${name}${suffix}`;
+    for (const name of direction === 1 ? [variable] : [variable,'--inspector-height']) {
+      const saved = Number(localStorage.getItem(key(name)));
+      if (Number.isFinite(saved) && saved > 0) scope.style.setProperty(name,`${saved}px`);
+    }
+    const setWidth = width => scope.style.setProperty(sizeVar(), `${width}px`);
+    const width = () => Math.round(pane.getBoundingClientRect()[bottom()?'height':'width']);
+    const coordinate = event => bottom() ? event.clientY : event.clientX;
     const resize = next => {
       setWidth(Math.max(1,next));
       setWidth(width()); // Use the responsive CSS limits, including after a viewport resize.
     };
     new ResizeObserver(() => {
-      const w=width(), available=divider.parentElement.clientWidth;
+      const w=width(), available=divider.parentElement[bottom()?'clientHeight':'clientWidth'];
       if (!w) return;
-      divider.setAttribute('aria-valuemin', String(direction===1 ? 180 : Math.round(Math.min(160,available*.45))));
+      divider.setAttribute('aria-valuemin', String(direction===1 ? 180 : Math.round(Math.min(bottom()?100:160,available*.45))));
       divider.setAttribute('aria-valuemax', String(Math.round(available*(direction===1 ? .55 : .65))));
       divider.setAttribute('aria-valuenow',String(w));
       divider.setAttribute('aria-valuetext',`${w} px`);
@@ -35,26 +41,35 @@ applyTheme();
     let drag;
     divider.addEventListener('pointerdown', e => {
       if (e.button!==0 || !e.isPrimary) return;
-      drag={id:e.pointerId,x:e.clientX,width:width()};
+      drag={id:e.pointerId,x:coordinate(e),width:width()};
       divider.setPointerCapture(e.pointerId);
       e.preventDefault();
     });
     divider.addEventListener('pointermove', e => {
-      if (drag?.id===e.pointerId) resize(drag.width+direction*(e.clientX-drag.x));
+      if (drag?.id===e.pointerId) resize(drag.width+direction*(coordinate(e)-drag.x));
     });
     divider.addEventListener('lostpointercapture', () => {
-      if (drag) localStorage.setItem(key,String(width()));
+      if (drag) localStorage.setItem(key(sizeVar()),String(width()));
       drag=null;
     });
     divider.addEventListener('keydown', e => {
-      if (!['ArrowLeft','ArrowRight'].includes(e.key)) return;
+      const keys=bottom()?['ArrowUp','ArrowDown']:['ArrowLeft','ArrowRight'];
+      if (!keys.includes(e.key)) return;
       e.preventDefault();
-      resize(width() + direction*(e.key==='ArrowLeft' ? -16 : 16));
-      localStorage.setItem(key,String(width()));
+      resize(width() + direction*(e.key===keys[0] ? -16 : 16));
+      localStorage.setItem(key(sizeVar()),String(width()));
     });
   }
   setupDivider('catalog-divider','catalog','--catalog-width',1);
-  setupDivider('inspector-divider','class-inspector','--inspector-width',-1);
+function collapseCatalog(collapsed) {
+  $('catalog').classList.toggle('collapsed', collapsed);
+  const toggle = $('catalog-toggle');
+  toggle.setAttribute('aria-expanded', String(!collapsed));
+  toggle.title = collapsed ? 'Rozbaliť katalóg' : 'Zbaliť katalóg';
+  toggle.setAttribute('aria-label', toggle.title);
+  toggle.textContent = collapsed ? '»' : '«';
+}
+$('catalog-toggle').addEventListener('click', () => collapseCatalog(!$('catalog').classList.contains('collapsed')));
 function setText(id, value) {
   const node = $(id);
   if (node.textContent !== value) node.textContent = value;
@@ -81,13 +96,277 @@ let modelListGeneration = 0;
 let modelChoices = [];
 const diagramTrail = [];
 const diagramTabs = new Map();
-let inspectedElement = null;
-let inspectorSequence = 0;
+const mainStage = $('diagram').parentElement;
+const inspectors = new Map();
+const sqdLinks = new WeakMap();
+let linksGeneration = 0;
+function setupInspector(stage, number) {
+  const suffix = number === 1 ? '' : `-${number}`;
+  if (suffix) {
+    for (const id of ['inspector-divider','class-inspector']) {
+      const copy = $(id).cloneNode(true);
+      for (const node of [copy,...copy.querySelectorAll('[id]')]) node.id += suffix;
+      stage.append(copy);
+    }
+  }
+  const elements = Object.fromEntries(['class-inspector','inspector-fields','inspector-name','inspector-divider','close-inspector']
+    .map(id => { const el=$(id+suffix); el.classList.add(id); return [id,el]; }));
+  elements['inspector-divider'].setAttribute('aria-controls',elements['class-inspector'].id);
+  const dock = stage.querySelector('.dock-inspector'), divider = elements['inspector-divider'];
+  const dockKey = `select-reader:inspector-dock${suffix}`;
+  const visibilityKey = `select-reader:inspector-visibility${suffix}`;
+  const place = bottom => {
+    stage.dataset.dock = bottom ? 'bottom' : 'right';
+    for (const button of dock.querySelectorAll('button'))
+      button.setAttribute('aria-pressed',String(button.dataset.position===stage.dataset.dock));
+    divider.setAttribute('aria-orientation',bottom?'horizontal':'vertical');
+    const label = bottom ? 'Výška detailu' : 'Šírka detailu';
+    divider.setAttribute('aria-label',label);
+    divider.title = `${label}: potiahni alebo použi šípky`;
+  };
+  place(localStorage.getItem(dockKey)==='bottom');
+  for (const button of dock.querySelectorAll('button')) button.addEventListener('click',()=>{
+    place(button.dataset.position==='bottom');
+    localStorage.setItem(dockKey,stage.dataset.dock);
+    localStorage.setItem(visibilityKey,'open');
+  });
+  setupDivider(elements['inspector-divider'].id,elements['class-inspector'].id,'--inspector-width',-1,stage,suffix);
+  elements['close-inspector'].addEventListener('click',()=>{
+    localStorage.setItem(visibilityKey,'closed');
+    closeInspector(stage);
+  });
+  inspectors.set(stage,{aside:elements['class-inspector'],panel:elements['inspector-fields'],name:elements['inspector-name'],sequence:0,element:null,visibilityKey});
+}
+setupInspector(mainStage,1);
 const diagram = new Diagram($('diagram'), $('diagram-notice'), (id, link) => {
   if (['sequence', 'class'].includes(diagram.data?.uml?.kind))
     return inspectDiagramElement(link === 'callers' ? selectedId : id, link);
   return openDetail(id);
 });
+let dragEntry = null;
+let dropTarget = null;
+function setDropTarget(root) {
+  if (root === dropTarget) return;
+  dropTarget?.classList.remove('diagram-drop-target');
+  dropTarget = root;
+  root?.classList.add('diagram-drop-target');
+}
+const loadingClocks = new Map();
+function startLoading(element, label='Načítavam diagram…') {
+  const timer = element.querySelector('[role=timer]');
+  element.querySelector('.loading-label').textContent = label;
+  timer.textContent = formatElapsed(0);
+  loadingClocks.set(element,{timer,start:performance.now()});
+  element.hidden = false;
+}
+function stopLoading(element) {
+  loadingClocks.delete(element);
+  element.hidden = true;
+}
+const extraPanes = [2,3,4].map(createPane);
+function createPane(number) {
+  const root = $('compare-template').content.firstElementChild.cloneNode(true);
+  $('diagram-pair').append(root);
+  root.setAttribute('aria-label',`Okno ${number}`);
+  const find = selector => root.querySelector(selector);
+  const stage = find('.diagram-stage'), bar = find('.window-tabs'), notice = find('.diagram-notice');
+  const heading = find('.pane-heading'), favorite = find('[data-command=favorite]'), refresh = find('[data-command=refresh]');
+  const loading = $('detail-loading').cloneNode(true);
+  loading.removeAttribute('id');
+  stage.append(loading);
+  stage.id = `pane-content-${number}`;
+  setupInspector(stage,number);
+  bar.setAttribute('aria-label',`Karty okna ${number}`);
+  const tabs = new Map();
+  let active = null, version = 0;
+  const inspect = (id,link) => inspectDiagramElement(link === 'callers' ? active : id,link,stage);
+  const view = new Diagram(find('.diagram'),notice,inspect);
+  const search = find('input[type=search]'), matches = find('.pane-matches');
+  search.addEventListener('input', () => {
+    if (tabs.has(active)) tabs.get(active).query = search.value;
+    updateDiagramSearch(view,search,matches);
+  });
+  const showFavorite = () => {
+    favorite.textContent = favorites.has(active) ? '★' : '☆';
+    favorite.setAttribute('aria-pressed',String(favorites.has(active)));
+  };
+  function draw() {
+    drawTabs(bar,tabs,active,open,close,stage.id);
+    heading.hidden = find('.diagram-toolbar').hidden = !active;
+    if (!active) notice.textContent = '';
+    refresh.hidden = !!state?.offline && !state.selection?.modelId;
+    showFavorite();
+  }
+  function clearView() {
+    inspectors.get(stage).diagramResult = null;
+    closeInspector(stage);
+    clearTimeout(view.pendingTextClick);
+    view.clearLabels();
+    view.data = view.box = view.initial = null;
+    view.svg.replaceChildren();
+    view.svg.removeAttribute('viewBox');
+  }
+  function reset() { ++version; stopLoading(loading); tabs.clear(); active=null; clearView(); draw(); }
+  function close(id) {
+    const ids=[...tabs.keys()], i=ids.indexOf(id);
+    tabs.delete(id);
+    if(id!==active) { draw(); return; }
+    const next=tabs.get(ids[i+1] ?? ids[i-1]);
+    if(next) open(next.entry); else reset();
+  }
+  async function open(entry, fresh=false) {
+    if (active===entry.id && view.data && !fresh) return;
+    if (tabs.has(active) && view.box) {
+      tabs.get(active).box=[...view.box];
+      tabs.get(active).inspector=inspectors.get(stage).element;
+    }
+    const seq=++version;
+    active=entry.id;
+    const tab=tabs.get(active) ?? {entry};
+    tabs.set(active,tab);
+    clearView(); draw();
+    search.value = tab.query ?? '';
+    matches.textContent = '';
+    renderTypeLabel(find('[data-pane-type]'),entry.type);
+    find('.pane-name').textContent=entry.name;
+    notice.textContent='';
+    startLoading(loading);
+    refresh.disabled=true;
+    try {
+      if (fresh || !tab.request) tab.request=(!fresh && diagramTabs.get(entry.id)?.request) ||
+        api(`/api/item/${encodeURIComponent(entry.id)}${fresh?'?refresh=1':''}`);
+      const result=await tab.request;
+      const {detail}=result;
+      if (seq!==version) return;
+      if (!detail.diagram) throw new Error('Pre tento prvok nie je dostupný diagram.');
+      view.render(detail.diagram);
+      restoreDiagramInspector(tab,result,stage);
+      updateDiagramSearch(view,search,matches);
+      if (tab.box) {view.box=[...tab.box];view.update();}
+      for (const marker of view.svg.querySelectorAll('marker[id]')) {
+        const old=marker.id;
+        marker.id=`pane-${number}-${old}`;
+        for(const edge of view.svg.querySelectorAll(`[marker-end="url(#${old})"]`)) edge.setAttribute('marker-end',`url(#${marker.id})`);
+      }
+    } catch(error) {
+      if (seq===version) {tab.request=null; notice.textContent=`Diagram sa nepodarilo načítať: ${error.message}`;}
+    } finally { if(seq===version) { stopLoading(loading); refresh.disabled=false; } }
+  }
+  find('.pane-name').onclick=()=>inspect(active,tabs.get(active).entry.type==='Object Sequence Diagram'?'callers':'diagram');
+  refresh.onclick=()=>open(tabs.get(active).entry,true);
+  favorite.onclick=()=>toggleFavorite(active);
+  find('[data-command=in]').onclick=()=>view.zoom(1/1.25);
+  find('[data-command=out]').onclick=()=>view.zoom(1.25);
+  find('[data-command=fit]').onclick=()=>view.fit();
+  bindDrop(root,tabs,open);
+  draw();
+  return {root,view,reset,showFavorite};
+}
+function setLayout(count) {
+  $('diagram-pair').dataset.count=String(count);
+  extraPanes.forEach(({root},i)=>{root.hidden=i+2>count;});
+  const radio=document.querySelector(`input[name=pane-count][value="${count}"]`);
+  radio.checked=true;
+}
+const settings=$('layout-settings');
+settings.addEventListener('change',event=>{
+  setLayout(Number(event.target.value));
+  localStorage.setItem('select-reader:pane-count',event.target.value);
+  settings.open=false; settings.querySelector('summary').focus();
+});
+document.addEventListener('pointerdown',event=>{ if (!settings.contains(event.target)) settings.open=false; });
+settings.addEventListener('keydown',event=>{if(event.key==='Escape'){settings.open=false;settings.querySelector('summary').focus();}});
+const savedCount=Number(localStorage.getItem('select-reader:pane-count'));
+setLayout([2,4].includes(savedCount)?savedCount:1);
+function setupSplitDivider(axis) {
+  const grid=$('diagram-pair'), handle=$(`split-${axis}`), key=`select-reader:split-${axis}`;
+  const horizontal=axis==='x', position=horizontal?'clientX':'clientY', size=horizontal?'width':'height';
+  const stored=Number(localStorage.getItem(key));
+  let ratio, drag;
+  const set=value=>{
+    ratio=Math.max(15,Math.min(85,value));
+    grid.style.setProperty(`--split-${axis}`,`${ratio}%`);
+    handle.setAttribute('aria-valuenow',String(Math.round(ratio)));
+    handle.setAttribute('aria-valuetext',`${Math.round(ratio)} %`);
+  };
+  handle.setAttribute('aria-valuemin','15');
+  handle.setAttribute('aria-valuemax','85');
+  set(stored>=15 && stored<=85 ? stored : 50);
+  for (const grip of [handle,$('split-center')]) bindDrag(grip);
+  function bindDrag(grip) {
+    grip.addEventListener('pointerdown',e=>{
+    if (e.button!==0 || !e.isPrimary) return;
+    drag={id:e.pointerId,start:e[position],ratio,size:grid.getBoundingClientRect()[size]};
+    grip.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+    grip.addEventListener('pointermove',e=>{
+    if (drag?.id===e.pointerId) set(drag.ratio+100*(e[position]-drag.start)/drag.size);
+  });
+    grip.addEventListener('lostpointercapture',()=>{
+    if (drag) localStorage.setItem(key,String(ratio));
+    drag=null;
+  });
+  }
+  handle.addEventListener('keydown',e=>{
+    const keys=horizontal?['ArrowLeft','ArrowRight']:['ArrowUp','ArrowDown'];
+    if (!keys.includes(e.key)) return;
+    e.preventDefault();
+    set(ratio+(e.key===keys[0]?-2:2));
+    localStorage.setItem(key,String(ratio));
+  });
+}
+setupSplitDivider('x');
+setupSplitDivider('y');
+function bindDrop(root,tabs,open) {
+  const hover = e=>{
+    if (!dragEntry || dragEntry.source?.root === root) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect=dragEntry.source?'move':'copy';
+    setDropTarget(root);
+  };
+  root.addEventListener('dragenter',hover);
+  root.addEventListener('dragover',hover);
+  root.addEventListener('dragleave',e=>{
+    if (dropTarget===root && !root.contains(e.relatedTarget)) setDropTarget(null);
+  });
+  root.addEventListener('drop',e=>{
+    if (!dragEntry) return;
+    e.preventDefault();
+    const {entry,source} = dragEntry;
+    clearDiagramDrag();
+    if (source?.root === root) return;
+    if (source && !tabs.has(entry.id)) {
+      const tab = {...source.tab};
+      if (source.active) {
+        const view = source.root === $('main-pane') ? diagram : extraPanes.find(p=>p.root===source.root).view;
+        if (view.box) tab.box = [...view.box];
+        tab.query = source.root.querySelector('.diagram-toolbar input[type=search]').value;
+        tab.inspector = inspectors.get(view.container.parentElement).element;
+      }
+      tabs.set(entry.id,tab);
+    }
+    open(entry);
+    if (source) {
+      source.close(entry.id);
+      root.querySelector('[role=tab][aria-selected=true]')?.focus();
+    }
+  });
+}
+bindDrop($('main-pane'),diagramTabs,entry=>openDetail(entry.id,entry));
+function clearDiagramDrag() {
+  dragEntry = null;
+  setDropTarget(null);
+}
+function dragToCompare(button, entry, source=null) {
+  button.draggable = true;
+  button.addEventListener('dragstart', event => {
+    dragEntry = {entry,source};
+    event.dataTransfer.setData('text/plain',entry.name);
+    event.dataTransfer.effectAllowed = source ? 'move' : 'copy';
+  });
+  button.addEventListener('dragend',clearDiagramDrag);
+}
 
 async function api(url, data) {
   const response = await fetch(url, data === undefined ? undefined : {
@@ -122,17 +401,18 @@ function loadFavorites() {
   favorites = new Set(values);
 }
 
-let presence, leaving = false;
-function trackPresence() {
-  if (presence) return;
-  if (typeof SharedWorker !== 'undefined') presence = new SharedWorker('/presence.js');
-  else presence = new EventSource('/api/presence');
-}
+const viewId = crypto.randomUUID();
+let leaving = false;
+window.addEventListener('pagehide', event => {
+  if (event.persisted || leaving) return;
+  leaving = true;
+  clearTimeout(pollTimer);
+  navigator.sendBeacon('/api/reader/leave', new Blob([JSON.stringify({view:viewId})], {type:'application/json'}));
+});
 $('reader-controls').onclick = () => $('reader-dialog').showModal();
 $('reader-close').onclick = () => $('reader-dialog').close();
 for (const command of ['stop','restart']) {
   $(`reader-${command}`).onclick = async () => {
-    if (!confirm(command==='restart' ? 'Reštartovať Reader pre všetky karty? Model bude potrebné znovu otvoriť.' : 'Vypnúť lokálny Reader pre všetky karty?')) return;
     try {
       await api(`/api/reader/${command}`,{});
     } catch (error) { setText('reader-status',error.message); return; }
@@ -154,14 +434,19 @@ async function poll() {
   if(leaving)return;
   clearTimeout(pollTimer);
   try {
-    const next = await api('/api/state');
+    const next = await api(`/api/state?view=${viewId}`);
     const changed = !state || state.count !== next.count || state.detailCount !== next.detailCount ||
       state.status.phase !== next.status.phase;
     const modelChanged = JSON.stringify(state?.selection) !== JSON.stringify(next.selection) || state?.offline !== next.offline;
     state = next;
     if (modelChanged) {
+      linksGeneration++;
+      inspectors.get(mainStage).diagramResult = null;
       diagramTrail.length = 0;
       diagramTabs.clear();
+      stopLoading($('detail-loading'));
+      clearDiagramDrag();
+      extraPanes.forEach(pane=>pane.reset());
       closeInspector();
       kind = 'diagrams';
       preferredType = defaultDiagramType;
@@ -181,8 +466,6 @@ async function poll() {
 function renderState() {
   const selection = state.selection, status = state.status;
   $('reader-controls').hidden = !state.lifecycle;
-  if(state.lifecycle)trackPresence();
-  $('welcome').hidden = Boolean(selection);
   const indexing = !!selection && !state.offline && status.phase === 'loading';
   $('catalog-loading').hidden = !indexing;
   if (indexing) setText('catalog-progress', `Načítavam katalóg${status.current ? ` · ${status.current}` : '…'}`);
@@ -192,7 +475,7 @@ function renderState() {
   renderExport(state.markdownExport ?? {phase:'idle'});
   setText('model-name', selection?.model ?? 'Žiadny otvorený model');
   setText('model-location', selection ? `${selection.server} / ${selection.repository}` : 'Pripoj server alebo otvor lokálnu kópiu');
-  setText('snapshot', selection ? `${state.offline ? 'Offline · ' : ''}${state.catalogComplete ? 'Úplný katalóg' : 'Čiastočný katalóg'} · ${state.count.toLocaleString('sk')} objektov${state.updatedAt ? ` · kópia ${formatTime(state.updatedAt)}` : ''}` : '');
+  setText('snapshot', selection ? `${state.offline ? 'Lokálna kópia · ' : ''}${state.catalogComplete ? 'Úplný katalóg' : 'Čiastočný katalóg'} · ${state.count.toLocaleString('sk')} objektov${state.updatedAt ? ` · kópia ${formatTime(state.updatedAt)}` : ''}` : '');
   if (status.error && status.phase !== 'partial') showError(new Error(status.error));
   $('search-scope-note').hidden = !selection || state.catalogComplete;
   $('search-scope-note').title = status.phase === 'partial' ? status.error : state.searchScope;
@@ -207,7 +490,6 @@ function renderState() {
 
 let pickingExportFolder = false;
 let exportClock;
-let detailStartedAt;
 function formatElapsed(ms) {
   const seconds = Math.floor(ms / 1000);
   return [Math.floor(seconds/3600), Math.floor(seconds/60)%60, seconds%60]
@@ -222,16 +504,17 @@ function updateExportClock() {
 }
 setInterval(() => {
   updateExportClock();
-  if (detailStartedAt != null && !$('detail').hidden) setText('detail-clock',formatElapsed(performance.now()-detailStartedAt));
+  for (const {timer,start} of loadingClocks.values()) timer.textContent=formatElapsed(performance.now()-start);
 }, 1000);
 function renderExport(job) {
-    const online = state?.selection && !state.offline;
-    $('export-md').disabled = !online && job.phase === 'idle';
-    $('export-start').disabled = !online || !!job.active || pickingExportFolder;
+    const canExport = !!state?.selection?.modelId;
+    $('export-md').disabled = !canExport && job.phase === 'idle';
+    $('export-start').disabled = !canExport || !!job.active || pickingExportFolder;
     $('export-browse').disabled = !!job.active || pickingExportFolder;
+    $('export-open-folder').disabled = pickingExportFolder;
     $('export-default').hidden = !$('export-folder').value || !!job.active || pickingExportFolder;
     $('export-stop').hidden = !job.active;
-    $('export-resume').hidden = !online || !job.run || !['failed','cancelled'].includes(job.phase);
+    $('export-resume').hidden = !canExport || !job.run || !['failed','cancelled'].includes(job.phase);
     const phases = {index:'Indexovanie',read:'Čítanie diagramov',references:'Referencie',write:'Zápis stránok',retry:'Čakám na automatický pokus'};
     const toolbarLabel = job.active ? `Export: ${phases[job.phase]}${job.total ? ` · ${job.done}/${job.total}` : '…'}`
       : ({complete:'Export: hotovo',failed:'Export: chyba',cancelled:'Export: zastavený'})[job.phase] ?? 'Export modelu do .md';
@@ -248,6 +531,9 @@ function renderExport(job) {
   }
   $('export-md').addEventListener('click', () => $('export-dialog').showModal());
   $('export-close').addEventListener('click', () => $('export-dialog').close());
+  $('export-open-folder').addEventListener('click',handle(async () => {
+    await api('/api/export/open-folder',{folder:$('export-folder').value});
+  }, 'export-error'));
   $('export-browse').addEventListener('click',handle(async () => {
     pickingExportFolder = true;
     renderExport(state.markdownExport);
@@ -335,17 +621,16 @@ function renderResults() {
     const name = document.createElement('span');
     name.className = 'result-text';
     name.textContent = `${favorites.has(entry.id) ? '★ ' : ''}${entry.name || '(bez názvu)'}`;
-    if (entry.type === 'Class Diagram' || entry.type === 'Object Sequence Diagram') {
-      const mark = document.createElement('span'), cld = entry.type === 'Class Diagram';
-      mark.className = cld ? 'result-class' : 'result-sequence';
+    const mark = diagramTypeIcon(entry.type);
+    if (mark) {
       mark.setAttribute('aria-hidden', 'true');
-      mark.textContent = cld ? '▤' : '⇄';
       button.append(mark);
     }
     button.append(name);
     button.setAttribute('aria-label', `${name.textContent}, ${entry.type}`);
     button.title = entry.path;
     button.addEventListener('click', () => openDetail(entry.id, entry));
+    if (/\bdiagram$/i.test(entry.type)) dragToCompare(button,entry);
     fragment.append(button);
   }
   if (!visible.length) {
@@ -358,41 +643,16 @@ function renderResults() {
   $('results').replaceChildren(fragment);
 }
 
-async function followDiagram(id) {
-  closeInspector();
-  const sequence = ++detailSequence, panel = $('diagram-links');
-  panel.hidden = false;
-  panel.textContent = 'Hľadám súvisiaci diagram…';
-  const read = async key => (await api(`/api/item/${encodeURIComponent(key)}`)).detail.relations;
-  const navigate = entry => {
-    if (sequence !== detailSequence) return;
-    diagramTrail.push(selectedEntry);
-    return openDetail(entry.id, entry, true);
-  };
-  try {
-    const relations = await read(id), targets = new Map();
-    const collect = (relations, role, type) => {
-      for (const r of relations) if (r.role === role && r.item.nativeClass === type) targets.set(r.item.id, r.item);
-    };
-    for (const r of relations) {
-      if (sequence !== detailSequence) return;
-      if (r.role === '_Ent2_Class_To_CDClass' && r.item.nativeClass === '_Ent2_CDClass')
-        collect(await read(r.item.id), '_Ent2_Symbol_To_Diagram', '_Ent2_ClassDiagram');
-    }
-    if (sequence !== detailSequence) return;
-    const choices = [...targets.values()].sort((a, b) => a.name.localeCompare(b.name, 'sk'));
-    if (choices.length === 1) return navigate(choices[0]);
-    panel.textContent = choices.length ? 'Vyber cieľový diagram: ' : 'Prvok nemá priradený diagram tohto typu.';
-    for (const entry of choices) {
-      const button = document.createElement('button');
-      button.textContent = entry.name;
-      button.title = entry.path;
-      button.addEventListener('click', () => navigate(entry));
-      panel.append(button);
-    }
-  } catch (error) {
-    if (sequence === detailSequence) panel.textContent = `Súvisiaci diagram sa nepodarilo načítať: ${error.message}`;
+async function relatedClassDiagrams(relations,current) {
+  const targets = new Map();
+  const symbols = new Set(relations.filter(r=>r.role==='_Ent2_Class_To_CDClass' && r.item.nativeClass==='_Ent2_CDClass').map(r=>r.item.id));
+  for (const id of symbols) {
+    if (!current()) break;
+    const {detail} = await api(`/api/item/${encodeURIComponent(id)}`);
+    for (const r of detail.relations)
+      if (r.role==='_Ent2_Symbol_To_Diagram' && r.item.nativeClass==='_Ent2_ClassDiagram') targets.set(r.item.id,r.item);
   }
+  return [...targets.values()].sort((a,b)=>a.name.localeCompare(b.name,'sk'));
 }
 
 $('diagram-back').addEventListener('click', () => {
@@ -403,30 +663,33 @@ $('diagram-back').addEventListener('click', () => {
 $('refresh-diagram').addEventListener('click', () => openDetail(selectedId, selectedEntry, true, true));
 
 function renderDiagramTabs(focus = false) {
-  const bar = $('diagram-tabs');
+  drawTabs($('diagram-tabs'),diagramTabs,selectedId,entry=>openDetail(entry.id,entry),closeDiagramTab,'detail',focus);
+}
+function drawTabs(bar,diagramTabs,selectedId,open,closeTab,controls,focus=false) {
   bar.hidden = !diagramTabs.size;
   bar.replaceChildren();
   for (const [id, tab] of diagramTabs) {
     const group = document.createElement('span'), button = document.createElement('button'), close = document.createElement('button');
     group.className = 'diagram-tab';
     button.setAttribute('role','tab');
-    button.setAttribute('aria-controls','detail');
+    button.setAttribute('aria-controls',controls);
     button.setAttribute('aria-selected',String(id === selectedId));
     button.tabIndex = id === selectedId || (!diagramTabs.has(selectedId) && !bar.childElementCount) ? 0 : -1;
     button.title = button.textContent = tab.entry.name;
     const activate = () => {
-      if (id !== selectedId) openDetail(id, tab.entry);
+      if (id !== selectedId) open(tab.entry);
       bar.querySelector('[aria-selected=true]')?.focus();
     };
     button.addEventListener('click', activate);
+    dragToCompare(button,tab.entry,{tab,active:id===selectedId,root:bar.closest('.window-pane'),close:closeTab});
     close.textContent = '×';
     close.setAttribute('aria-label',`Zavrieť kartu: ${tab.entry.name}`);
     close.title = 'Zavrieť kartu';
-    close.addEventListener('click', () => closeDiagramTab(id));
-    group.addEventListener('auxclick', e => { if (e.button === 1) { e.preventDefault(); closeDiagramTab(id); } });
+    close.addEventListener('click', () => closeTab(id));
+    group.addEventListener('auxclick', e => { if (e.button === 1) { e.preventDefault(); closeTab(id); } });
     button.addEventListener('keydown', e => {
       const ids = [...diagramTabs.keys()], i = ids.indexOf(id);
-      if (e.key === 'Delete') { e.preventDefault(); closeDiagramTab(id); return; }
+      if (e.key === 'Delete') { e.preventDefault(); closeTab(id); return; }
       const next = {ArrowLeft:(i+ids.length-1)%ids.length,ArrowRight:(i+1)%ids.length,Home:0,End:ids.length-1}[e.key];
       if (next === undefined) return;
       e.preventDefault();
@@ -447,23 +710,24 @@ function closeDiagramTab(id) {
   const next = ids[i+1] ?? ids[i-1];
   if (next) { openDetail(next, diagramTabs.get(next).entry); renderDiagramTabs(true); return; }
   ++detailSequence;
-  detailStartedAt = null;
+  stopLoading($('detail-loading'));
   selectedEntry = selectedId = null;
   diagramTrail.length = 0;
   closeInspector();
   $('detail').hidden = true;
   renderDiagramTabs();
   renderResults();
-  $('search').focus();
+  ($('catalog').classList.contains('collapsed') ? $('catalog-toggle') : $('search')).focus();
 }
 
 async function openDetail(id, entry = null, linked = false, refresh = false) {
   const old = diagramTabs.get(selectedId);
   if (old && selectedId === id && !refresh && old.loaded) return;
+  inspectors.get(mainStage).diagramResult = null;
   if (old?.loaded && !$('diagram-panel').hidden) {
     old.box = diagram.box ? [...diagram.box] : null;
     old.query = $('diagram-search').value;
-    old.inspector = inspectedElement;
+    old.inspector = inspectors.get(mainStage).element;
   }
   closeInspector();
   if (!linked) diagramTrail.length = 0;
@@ -478,11 +742,8 @@ async function openDetail(id, entry = null, linked = false, refresh = false) {
     diagramTabs.set(id,tab);
   }
   renderDiagramTabs();
-  $('welcome').hidden = true;
   $('detail').hidden = false;
-  detailStartedAt = performance.now();
-  setText('detail-clock',formatElapsed(0));
-  $('detail-loading').hidden = false;
+  startLoading($('detail-loading'), tab ? 'Načítavam diagram…' : 'Načítavam detail…');
   $('detail-error').hidden = true;
   $('detail-warnings').hidden = true;
   $('attributes-panel').replaceChildren();
@@ -531,7 +792,7 @@ async function openDetail(id, entry = null, linked = false, refresh = false) {
     const warnings = (detail.warnings ?? []).filter(message =>
       !message.endsWith(': príloha nie je textový dokument; jej bajty sa nevykresľujú ako text.'));
     if (state.offline && ['Class Diagram', 'Object Sequence Diagram'].includes(result.entry.type) && !detail.diagram?.uml)
-      warnings.unshift('Táto stará offline kópia ešte neobsahuje UML význam tried a správ. Otvor model online pre nové načítanie.');
+      warnings.unshift(`Táto kópia ešte neobsahuje UML význam tried a správ. ${state.selection?.modelId ? 'Použi Obnoviť pre nové načítanie.' : 'Otvor model online pre nové načítanie.'}`);
     if (detail.textOnly) warnings.unshift('Táto offline kópia obsahuje len textové vlastnosti. Pre nové načítanie otvor model online.');
     if (warnings.length) {
       const details = document.createElement('details'), summary = document.createElement('summary');
@@ -555,23 +816,38 @@ async function openDetail(id, entry = null, linked = false, refresh = false) {
       if (tab?.box) { diagram.box = [...tab.box]; diagram.update(); }
       $('diagram-search').value = tab?.query ?? '';
       $('diagram-search').dispatchEvent(new Event('input'));
-      if (tab?.inspector) inspectDiagramElement(tab.inspector.id, tab.inspector.link);
+      restoreDiagramInspector(tab,result,mainStage);
     }
   } catch (error) {
     if (sequence === detailSequence) showError(error, 'detail-error');
   } finally {
     if (sequence === detailSequence) {
-      $('detail-loading').hidden = true;
-      detailStartedAt = null;
+      stopLoading($('detail-loading'));
       $('refresh-diagram').disabled = false;
     }
   }
 }
 
+function diagramTypeIcon(type) {
+  if (type !== 'Class Diagram' && type !== 'Object Sequence Diagram') return null;
+  const icon = document.createElement('span'), cld = type === 'Class Diagram';
+  icon.className = cld ? 'result-class' : 'result-sequence';
+  icon.textContent = cld ? '▤' : '⇄';
+  return icon;
+}
+function renderTypeLabel(label,type) {
+  const icon = diagramTypeIcon(type);
+  label.classList.toggle('type-badge',!icon);
+  if (!icon) { label.textContent = type; return; }
+  icon.title = type;
+  icon.setAttribute('role','img');
+  icon.setAttribute('aria-label',type);
+  label.replaceChildren(icon);
+}
 function setDetailType(type) {
-  $('refresh-diagram').hidden = state?.offline || !/\bdiagram$/i.test(type);
-  $('detail-type').textContent = type;
-  $('detail').classList.toggle('sequence-detail', type === 'Object Sequence Diagram');
+  $('refresh-diagram').hidden = (state?.offline && !state.selection?.modelId) || !/\bdiagram$/i.test(type);
+  renderTypeLabel($('detail-type'),type);
+  $('detail').classList.toggle('diagram-detail', /\bdiagram$/i.test(type));
   const heading=$('detail-name');
   for(const attr of ['role','tabindex','title']) heading.removeAttribute(attr);
 }
@@ -586,31 +862,72 @@ $('detail-name').addEventListener('keydown', event=>{
   }
 });
 
-function closeInspector() {
-  inspectorSequence++;
-  inspectedElement = null;
-  $('class-inspector').hidden = true;
+function closeInspector(stage=mainStage) {
+  const inspector = inspectors.get(stage);
+  inspector.sequence++;
+  inspector.element = null;
+  inspector.aside.hidden = true;
 }
-$('close-inspector').addEventListener('click', closeInspector);
 
-async function inspectDiagramElement(id, link) {
-  inspectedElement = {id,link};
-  const sequence = ++inspectorSequence, owner = detailSequence;
-  const current = () => sequence === inspectorSequence && owner === detailSequence;
-  const panel = $('inspector-fields');
-  $('class-inspector').hidden = false;
-  $('inspector-name').textContent = 'Detail prvku';
+function restoreDiagramInspector(tab, result, stage) {
+  const {entry} = result;
+  inspectors.get(stage).diagramResult = result;
+  if (entry.type === 'Object Sequence Diagram') diagramLinks(result);
+  if (tab.inspector === undefined && localStorage.getItem(inspectors.get(stage).visibilityKey)==='closed') return;
+  const target = tab.inspector === undefined
+    ? {id:entry.id, link:entry.type === 'Object Sequence Diagram' ? 'callers' : 'diagram'}
+    : tab.inspector;
+  if (target) inspectDiagramElement(target.id, target.link, stage, target.id === entry.id ? result : null, false);
+}
+
+async function loadLinks(detail, isProbe, current) {
+  const readRelations = async id => {
+    if (!current()) throw new Error('Výber diagramu sa zmenil.');
+    return (await api(`/api/item/${encodeURIComponent(id)}`)).detail.relations;
+  };
+  const owners = [];
+  if (isProbe) owners.push(detail.relations);
+  else for (const id of new Set(detail.relations.filter(r=>r.role==='_Ent2_ObjectSequenceDiagram_To_ParentOSD').map(r=>r.item.id)))
+    owners.push(await readRelations(id));
+  const callers = new Map();
+  for (const id of new Set(owners.flat().filter(r=>r.item.nativeClass==='_Ent2_OSDProbe' && r.role.endsWith('_To_OSDProbe')).map(r=>r.item.id)))
+    for (const r of await readRelations(id))
+      if (r.role==='_Ent2_Symbol_To_Diagram' && r.item.nativeClass==='_Ent2_ObjectSequenceDiagram') callers.set(r.item.id,r.item);
+  return [...callers.values()].sort((a,b)=>a.name.localeCompare(b.name,'sk'));
+}
+
+function diagramLinks(result) {
+  if (!sqdLinks.has(result)) {
+    const generation = linksGeneration;
+    const request = loadLinks(result.detail,false,()=>generation===linksGeneration);
+    sqdLinks.set(result,request);
+    // Keep successful reads with this diagram version; allow a failed prefetch to retry on open.
+    request.catch(()=>sqdLinks.delete(result));
+  }
+  return sqdLinks.get(result);
+}
+
+async function inspectDiagramElement(id, link, stage=mainStage, loaded=null, rememberOpen=true) {
+  const inspector = inspectors.get(stage);
+  if (rememberOpen) localStorage.setItem(inspector.visibilityKey,'open');
+  inspector.element = {id,link};
+  const sequence = ++inspector.sequence;
+  const current = () => sequence === inspector.sequence;
+  const panel = inspector.panel;
+  inspector.aside.hidden = false;
+  inspector.name.textContent = 'Detail prvku';
   panel.textContent = 'Načítavam…';
   try {
-    const { entry, detail } = await api(`/api/item/${encodeURIComponent(id)}`);
+    const result = loaded ?? (inspector.diagramResult?.entry.id === id ? inspector.diagramResult : await api(`/api/item/${encodeURIComponent(id)}`));
+    const { entry, detail } = result;
     if (!current()) return;
-    $('inspector-name').textContent = entry.name;
+    inspector.name.textContent = entry.name;
     panel.replaceChildren();
     const diagramLink = target => {
       const link = document.createElement('a');
       link.href = '#diagram';
       link.className = 'sqd-link';
-      link.setAttribute('aria-label', `Otvoriť SQD: ${target.name}`);
+      link.setAttribute('aria-label', `Otvoriť ${target.nativeClass==='_Ent2_ClassDiagram'?'CLD':'SQD'}: ${target.name}`);
       const arrow = document.createElement('span');
       arrow.setAttribute('aria-hidden', 'true');
       arrow.textContent = '↗';
@@ -622,11 +939,10 @@ async function inspectDiagramElement(id, link) {
       });
       return link;
     };
-    if (link === 'class') {
-      const button = document.createElement('button');
-      button.textContent = 'Otvoriť súvisiaci CLD';
-      button.addEventListener('click', () => followDiagram(id));
-      panel.append(button);
+    const classLinks = link === 'class' ? document.createElement('div') : null;
+    if (classLinks) {
+      classLinks.textContent = 'Hľadám súvisiace CLD…';
+      panel.append(classLinks);
     }
     if (link === 'sequence') {
       const targets = new Map(detail.relations
@@ -640,39 +956,36 @@ async function inspectDiagramElement(id, link) {
     const properties = inspectorProperties(detail.attributes);
     panel.append(properties);
     const relations = document.createElement('details'), label = document.createElement('summary');
-    label.textContent = `Súvislosti (${detail.relations.length})`;
+    label.textContent = `Všetky prepojenia (${detail.relations.length})`;
     relations.append(label);
     relations.addEventListener('toggle', () => {
       if (relations.open && relations.childElementCount === 1 && !relations.dataset.rendered) {
-        renderRelations(detail.relations, relations, related => inspectDiagramElement(related.id));
+        renderRelations(detail.relations, relations, related => inspectDiagramElement(related.id,undefined,stage));
         relations.dataset.rendered = 'true';
       }
     });
     panel.append(relations);
+    if (classLinks) {
+      try {
+        const targets = await relatedClassDiagrams(detail.relations,current);
+        if (!current()) return;
+        classLinks.replaceChildren(...targets.map(diagramLink));
+        if (!targets.length) classLinks.textContent = 'Trieda nemá priradený CLD.';
+      } catch (error) {
+        if (current()) classLinks.textContent = `Súvisiace CLD sa nepodarilo načítať: ${error.message}`;
+      }
+    }
     if (link === 'sequence' || link === 'callers') {
       const section=document.createElement('section'), heading=document.createElement('h3'), list=document.createElement('div');
-      heading.textContent='Volané z SQD';
+      heading.textContent='Prepojenia';
       list.textContent='Načítavam prepojenia…';
       section.append(heading,list);
       panel.insertBefore(section,properties);
-      const readRelations=async key=>(await api(`/api/item/${encodeURIComponent(key)}`)).detail.relations;
       try {
-        const ownerRelations=[];
-        if(link==='sequence') ownerRelations.push(detail.relations);
-        else for(const r of detail.relations.filter(r=>r.role==='_Ent2_ObjectSequenceDiagram_To_ParentOSD')) {
-          if(!current())return;
-          ownerRelations.push(await readRelations(r.item.id));
-        }
-        const callers=new Map();
-        const probes=new Set(ownerRelations.flat().filter(r=>r.item.nativeClass==='_Ent2_OSDProbe' && r.role.endsWith('_To_OSDProbe')).map(r=>r.item.id));
-        for(const probe of probes) {
-          if(!current())return;
-          for(const r of await readRelations(probe))
-            if(r.role==='_Ent2_Symbol_To_Diagram' && r.item.nativeClass==='_Ent2_ObjectSequenceDiagram') callers.set(r.item.id,r.item);
-        }
+        const callers = await (link==='callers' ? diagramLinks(result) : loadLinks(detail,true,current));
         if(!current())return;
-        list.replaceChildren(...[...callers.values()].sort((a,b)=>a.name.localeCompare(b.name,'sk')).map(diagramLink));
-        if(!callers.size)list.textContent='Žiadny SQD na tento cieľ neodkazuje cez probe.';
+        list.replaceChildren(...callers.map(diagramLink));
+        if(!callers.length)list.textContent='Žiadny SQD na tento cieľ neodkazuje cez probe.';
       } catch(error) {
         if(current())list.textContent=`Prepojenia sa nepodarilo načítať: ${error.message}`;
       }
@@ -689,35 +1002,38 @@ function inspectorProperties(attributes) {
   const summary = document.createElement('summary'), other = document.createElement('div');
   section.append(heading, visible, more);
   more.append(summary, other);
-  const storageKey = 'select-reader:pinned-properties';
-  const pinned = new Set(JSON.parse(localStorage.getItem(storageKey) ?? '[]'));
-  const fixed = new Map([['Description','Description'], ['Popis','Popis'], ['AttributeDeclarations','Attribute declaration'],
+  const storageKey = 'select-reader:pinned-properties:v2';
+  const defaults = new Map([['Description','Description'], ['Popis','Popis'], ['AttributeDeclarations','Attribute declaration'],
     ['AttributeDeclaration','Attribute declaration'], ['Attribute declaration','Attribute declaration']]);
+  const stored = localStorage.getItem(storageKey);
+  const pinned = new Set(stored === null
+    ? [...defaults.values(), ...JSON.parse(localStorage.getItem('select-reader:pinned-properties') ?? '[]')]
+    : JSON.parse(stored));
   function draw(focusKey) {
     visible.replaceChildren();
     other.replaceChildren();
     let remaining = 0;
-    for (const [key,label] of fixed) {
-      if (Object.hasOwn(attributes, key)) renderAttributes({ [label]: attributes[key] || 'Nevyplnené' }, visible);
-    }
-    for (const key of Object.keys(attributes).filter(key => !fixed.has(key)).sort((a,b) => a.localeCompare(b,'sk'))) {
-      const active = pinned.has(key), parent = active ? visible : other;
+    const keys = [...defaults.keys()].filter(key => Object.hasOwn(attributes,key))
+      .concat(Object.keys(attributes).filter(key => !defaults.has(key)).sort((a,b) => a.localeCompare(b,'sk')));
+    for (const key of keys) {
+      const label = defaults.get(key) ?? key;
+      const active = pinned.has(label), parent = active ? visible : other;
       if (!active) remaining++;
-      renderAttributes({ [key]: attributes[key] }, parent);
+      renderAttributes({ [label]: defaults.has(key) ? attributes[key] || 'Nevyplnené' : attributes[key] }, parent);
       const star = document.createElement('button');
       star.type = 'button';
       star.className = 'property-star';
       star.textContent = active ? '★' : '☆';
       star.setAttribute('aria-pressed', String(active));
-      star.title = `${active ? 'Odobrať z predvolených' : 'Pridať medzi predvolené'}: ${key}`;
+      star.title = `${active ? 'Odobrať z predvolených' : 'Pridať medzi predvolené'}: ${label}`;
       star.setAttribute('aria-label', star.title);
       star.addEventListener('click', () => {
         const next = new Set(pinned);
-        if (active) next.delete(key); else next.add(key);
+        if (active) next.delete(label); else next.add(label);
         try { localStorage.setItem(storageKey, JSON.stringify([...next])); }
         catch (error) { showError(error); return; }
-        if (active) { pinned.delete(key); more.open = true; } else pinned.add(key);
-        draw(key);
+        if (active) { pinned.delete(label); more.open = true; } else pinned.add(label);
+        draw(label);
       });
       parent.lastElementChild.querySelector('dt').append(star);
     }
@@ -771,13 +1087,14 @@ function renderRelations(relations, panel = $('relations-panel'), inspect = entr
     }
     panel.append(group);
   }
-  if (!relations.length) panel.append('Pre tento objekt neboli načítané žiadne súvislosti.');
+  if (!relations.length) panel.append('Pre tento objekt neboli načítané žiadne prepojenia.');
 }
 
 function updateFavorite() {
   const enabled = favorites.has(selectedId);
   $('favorite').textContent = enabled ? '★' : '☆';
   $('favorite').setAttribute('aria-pressed', String(enabled));
+  extraPanes.forEach(pane=>pane.showFavorite());
 }
 
 const recentKey = 'select-reader:recent-models';
@@ -797,6 +1114,14 @@ async function refreshHistory() {
   try {
     if (!localStorage.getItem(recentKey)) rememberModel(state?.selection);
     const recent = recentModels();
+    const seen = new Set();
+    const servers = recent.map(model => model.server.trim()).filter(server => {
+      const key = server.toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    $('servers').replaceChildren(...servers.map(server => new Option(server, server)));
     $('recent-section').hidden = !recent.length;
     $('recent-models').replaceChildren();
     for (const selection of recent) {
@@ -899,7 +1224,6 @@ for (const [id, route] of [['retry-index','/api/open'], ['retry-missing','/api/c
     finally { $('retry-index').disabled = $('retry-missing').disabled = false; }
   }));
 }
-$('welcome-choose').addEventListener('click', showPicker);
 $('close-picker').addEventListener('click', closePicker);
 $('server').addEventListener('input', () => {
   repositoryGeneration++;
@@ -909,7 +1233,7 @@ $('server').addEventListener('input', () => {
   updateAuthenticationMode();
   populateRepositories();
 });
-$('server').addEventListener('change', () => { if ($('server').value.trim()) discoverRepositories(); });
+$('server').addEventListener('change', () => discoverRepositories());
 $('windows-connect').addEventListener('click', async () => {
   if (windowsConnectionBusy) return;
   const target = $('server').value.trim();
@@ -1052,15 +1376,19 @@ const discoverRepositories = handle(async () => {
   const server = $('server').value.trim();
   discoveredServer = '';
   populateRepositories();
+  $('picker-error').hidden = true;
+  if (!server) {
+    $('picker-status').textContent = 'Zadaj názov servera alebo vyber uložený model.';
+    return;
+  }
+  if (!/^[a-z0-9][a-z0-9._-]{0,252}$/i.test(server))
+    throw new Error('Zadaj názov servera alebo IPv4 adresu, nie URL či cestu.');
   $('picker-status').textContent = 'Priame TCP spojenie s databázovým brokerom…';
   try {
     const result = await api('/api/repositories', { server });
     if (generation !== repositoryGeneration) return;
     repositories = result.repositories;
     discoveredServer = server.toLowerCase();
-    const servers = [...new Set(repositories.map(repository => repository.server))];
-    $('servers').replaceChildren(...servers.map(server => new Option(server, server)));
-    if (!$('server').value && servers.length) $('server').value = servers[0];
     populateRepositories();
     $('picker-status').textContent = `${repositories.length} repozitárov za ${result.elapsedMs} ms · TCP ${server}:${result.port} · protokol ${result.protocol}. Výber repozitára načíta jeho modely.`;
   } catch (error) {
@@ -1121,31 +1449,42 @@ $('favorites-filter').addEventListener('click', () => {
   $('favorites-filter').setAttribute('aria-pressed', String(favoriteOnly));
   renderResults();
 });
-$('favorite').addEventListener('click', handle(async () => {
-  if (favorites.has(selectedId)) favorites.delete(selectedId); else favorites.add(selectedId);
+function toggleFavorite(id) {
+  if (favorites.has(id)) favorites.delete(id); else favorites.add(id);
   localStorage.setItem(favoriteKey(), JSON.stringify([...favorites]));
   updateFavorite();
   renderResults();
-}));
+}
+$('favorite').addEventListener('click', handle(async () => toggleFavorite(selectedId)));
 $('zoom-in').addEventListener('click', () => diagram.zoom(1 / 1.25));
+$('cursor-switch').addEventListener('click', ({currentTarget: toggle}) => {
+  const hand = toggle.getAttribute('aria-checked') !== 'true';
+  diagram.setHand(hand);
+  extraPanes.forEach(pane=>pane.view.setHand(hand));
+  toggle.setAttribute('aria-checked', String(hand));
+  toggle.title = hand ? 'Posúvanie rukou · prepnúť na výber textu' : 'Výber textu · prepnúť na posúvanie rukou';
+});
 $('zoom-out').addEventListener('click', () => diagram.zoom(1.25));
 $('fit').addEventListener('click', () => diagram.fit());
-$('diagram-search').addEventListener('input', () => {
-  const count = diagram.find($('diagram-search').value);
-  $('diagram-matches').textContent = $('diagram-search').value ? `${count} zhôd` : '';
-});
+function updateDiagramSearch(view, input, matches) {
+  const count = view.find(input.value);
+  matches.textContent = input.value ? `${count} zhôd` : '';
+}
+$('diagram-search').addEventListener('input', () => updateDiagramSearch(diagram,$('diagram-search'),$('diagram-matches')));
 document.addEventListener('keydown', event => {
   if (event.ctrlKey && !event.altKey && !event.metaKey && !event.defaultPrevented &&
-      !$('detail').hidden && !$('diagram-panel').hidden && !document.querySelector('dialog[open]')) {
+      ((!$('detail').hidden && !$('diagram-panel').hidden) || document.activeElement?.closest('.extra-pane')) && !document.querySelector('dialog[open]')) {
     const zoomIn = ['+', '='].includes(event.key) || event.code === 'NumpadAdd';
     const zoomOut = event.key === '-' || event.code === 'NumpadSubtract';
     if (zoomIn || zoomOut) {
       event.preventDefault();
-      $(zoomIn ? 'zoom-in' : 'zoom-out').click();
+      const pane = extraPanes.find(p=>p.root.contains(document.activeElement));
+      (pane?.view ?? diagram).zoom(zoomIn ? 1/1.25 : 1.25);
       return;
     }
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+    collapseCatalog(false);
     event.preventDefault();
     $('search').focus();
     $('search').select();

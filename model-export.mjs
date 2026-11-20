@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile, rename, appendFile, stat, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, rename, appendFile, stat, lstat, rm, rmdir } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -7,7 +7,17 @@ import { loadNativeCatalog, withNativeDetails } from './native-content.mjs';
 import { planPages, renderPage, indexes, auxiliary, backlinks, safeName } from './export-markdown.mjs';
 
 async function exists(file) {
-  try { await stat(file); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; }
+  try { await lstat(file); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; }
+}
+async function publishPages(staging, base, name) {
+  for (let n=1; ; n++) {
+    const target=path.join(base,n===1 ? name : `${name}_${n}`);
+    if (await exists(target)) continue;
+    try { await rename(staging,target); return target; }
+    catch (error) {
+      if (!['EEXIST','ENOTEMPTY','EPERM','EACCES'].includes(error.code) || !await exists(target)) throw error;
+    }
+  }
 }
 const json = async file => JSON.parse(await readFile(file, 'utf8'));
 const sortedKey = s => [s.server,s.repository,s.model,s.modelId];
@@ -24,12 +34,11 @@ export async function exportModel(selection, base, {
   const index = await catalog(selection, { diagramsOnly:true, signal });
   if (!index.complete || index.modelId !== selection.modelId) throw new Error('Zoznam diagramov nie je úplný alebo sa zmenil model. Export sa nepublikoval.');
   await mkdir(base,{recursive:true});
-  const run = resume ?? await mkdtemp(path.join(base,'export-'));
+  const run = resume ?? await mkdtemp(path.join(base,'.reader-export-'));
   const created = (await stat(run)).birthtime;
   const date = [created.getFullYear(), String(created.getMonth()+1).padStart(2,'0'), String(created.getDate()).padStart(2,'0')].join('-');
   const modelName = `${safeName(selection.model)}_${safeName(selection.repository)}_${date}`;
-  const result = path.join(run,modelName), work=path.join(run, '.reader-work'), staging=path.join(work,'pages'), snapshot=path.join(work,'data');
-  if (await exists(result)) throw new Error('Cieľ už existuje; export sa neprepísal.');
+  const work=path.join(run, '.reader-work'), staging=path.join(work,'pages'), snapshot=path.join(work,'data');
   await mkdir(snapshot,{recursive:true});
   const pages=planPages(index.entries,path.join(staging,modelName));
   const fingerprint=createHash('sha256').update(JSON.stringify([1,sortedKey(selection),index.contextId,pages.map(p=>[p.id,p.name,p.type])])).digest('hex');
@@ -146,16 +155,17 @@ export async function exportModel(selection, base, {
   }
   for(const [file,lines] of [...auxiliary(selection,events,others,usage,lookup),...indexes(selection,pages,events.size,others.size)]) await write(file,lines);
   check();
-  await rename(staging,result);
+  const result=await publishPages(staging,base,modelName);
   await rm(work,{recursive:true});
+  await rmdir(run);
   return {path:result,count:pages.length};
 }
 
 export class ExportJob {
   constructor(base, execute=exportModel, wait=delay) { this.base=base; this.execute=execute; this.wait=wait; this.state={phase:'idle'}; }
   start(reader,resume=false,base=this.base) {
-    if(this.controller || !reader.selection?.modelId || reader.offline)
-      throw Object.assign(new Error('Export vyžaduje otvorený online model a voľný exportér.'),{status:409});
+    if(this.controller || !reader.selection?.modelId)
+      throw Object.assign(new Error('Export vyžaduje otvorený model s identifikátorom a voľný exportér.'),{status:409});
     const selection={...reader.selection}, key=JSON.stringify(sortedKey(selection));
     const run=resume && this.key===key ? this.state.run : undefined;
     if(resume&&!run)throw Object.assign(new Error('Pre tento model nie je rozpracovaný export.'),{status:409});

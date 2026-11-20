@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Select Reader</title>
+  <link rel="icon" type="image/svg+xml" sizes="any" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232863da'/%3E%3Ctext x='16' y='24' text-anchor='middle' font-family='Segoe UI,Arial,sans-serif' font-size='24' font-weight='700' fill='white'%3ES%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.mjs"></script>
 </head>
@@ -11,10 +12,23 @@
   <header class="topbar">
     <a class="brand" href="/" aria-label="Select Reader domov"><span class="brand-icon">S</span> Select<span>Reader</span></a>
     <span class="top-spacer"></span>
+    <button type="button" id="cursor-switch" role="switch" aria-checked="false" aria-label="Režim ruky" title="Výber textu · prepnúť na posúvanie rukou">
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 3l14 11-7 1-3 7z"/></svg>
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 12V6a1.5 1.5 0 0 1 3 0v5-7a1.5 1.5 0 0 1 3 0v7-6a1.5 1.5 0 0 1 3 0v7-4a1.5 1.5 0 0 1 3 0v7c0 4-2 7-6 7h-1c-2 0-4-1-5-3l-4-6a1.5 1.5 0 0 1 2-2l2 2z"/></svg>
+    </button>
+    <details id="layout-settings"><summary aria-label="Rozloženie diagramov" title="Rozloženie diagramov">
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M12 4v16"/></svg>
+    </summary>
+      <div class="layout-menu" role="radiogroup" aria-labelledby="layout-title"><strong id="layout-title">Rozloženie diagramov</strong>
+        <label><input type="radio" name="pane-count" value="1" checked> Jedno okno</label>
+        <label><input type="radio" name="pane-count" value="2"> Dve okná vedľa seba</label>
+        <label><input type="radio" name="pane-count" value="4"> Štyri okná (2 × 2)</label>
+      </div>
+    </details>
     <button id="theme-toggle" aria-pressed="false">Tmavý režim</button>
-    <button id="reader-controls" hidden>Reader…</button>
-    <button id="choose-model" class="primary">Vybrať model</button>
     <button id="export-md" aria-haspopup="dialog" aria-controls="export-dialog" disabled>Export modelu do .md</button>
+    <button id="choose-model" class="primary">Vybrať model</button>
+    <button id="reader-controls" hidden>Reader…</button>
   </header>
   <section class="modelbar" aria-label="Otvorený model">
     <div><span class="eyebrow">PRACOVNÝ PRIESTOR</span><strong id="model-name">Žiadny otvorený model</strong></div>
@@ -27,7 +41,10 @@
   <div id="error" class="error" role="alert" hidden></div>
   <main>
     <aside id="catalog" class="catalog">
-      <label class="searchbox"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Hľadať v modeli…" aria-label="Hľadať v modeli" autocomplete="off"><kbd>Ctrl K</kbd></label>
+      <div class="catalog-head">
+        <label class="searchbox"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Hľadať v modeli…" aria-label="Hľadať v modeli" autocomplete="off"><kbd>Ctrl K</kbd></label>
+        <button id="catalog-toggle" type="button" aria-controls="catalog" aria-expanded="true" aria-label="Zbaliť katalóg" title="Zbaliť katalóg">«</button>
+      </div>
       <nav class="kinds" aria-label="Obsah modelu">
         <button data-kind="diagrams" aria-pressed="true">Diagramy <span id="diagrams-count">0</span></button>
         <button data-kind="dictionary" aria-pressed="false">Slovník <span id="dictionary-count">0</span></button>
@@ -43,17 +60,19 @@
     </aside>
     <div id="catalog-divider" class="pane-divider" role="separator" aria-controls="catalog" aria-orientation="vertical" aria-label="Šírka katalógu" tabindex="0" title="Šírka katalógu: potiahni alebo použi šípky"></div>
     <section class="workspace" aria-label="Detail objektu">
-      <div id="diagram-tabs" role="tablist" aria-label="Otvorené diagramy" hidden></div>
-      <div id="welcome" class="welcome" hidden>
-        <button id="welcome-choose" class="primary">Pripojiť k serveru →</button>
-      </div>
+      <div id="diagram-pair" data-count="1">
+        <div id="split-center" class="split-divider pane-divider" title="Potiahnutím posunieš obe hranice naraz" aria-hidden="true"></div>
+        <div id="split-x" class="split-divider pane-divider" role="separator" aria-label="Šírka okien diagramov" aria-orientation="vertical" tabindex="0" title="Šírka okien: potiahni alebo použi šípky"></div>
+        <div id="split-y" class="split-divider pane-divider" role="separator" aria-label="Výška okien diagramov" aria-orientation="horizontal" tabindex="0" title="Výška okien: potiahni alebo použi šípky"></div>
+      <section id="main-pane" class="window-pane" aria-label="Hlavné okno">
+      <div id="diagram-tabs" class="window-tabs" role="tablist" aria-label="Otvorené diagramy" hidden></div>
       <article id="detail" hidden>
         <header class="detail-header">
           <div class="detail-path" id="detail-path"></div>
           <div class="detail-heading"><div><span id="detail-type" class="type-badge"></span><h1 id="detail-name"></h1><button id="refresh-diagram" type="button" title="Znova načítať tento diagram zo servera" hidden>↻ Obnoviť</button></div><button id="favorite" title="Pridať medzi obľúbené" aria-pressed="false">☆</button></div>
           <div id="detail-source" class="muted"></div>
         </header>
-        <div id="detail-loading" role="status" hidden><span class="spinner"></span> Načítanie detailu… <span id="detail-clock" role="timer" aria-live="off">00:00:00</span></div>
+        <div id="detail-loading" class="pane-loading" role="status" hidden><span class="spinner" aria-hidden="true"></span><span class="loading-label">Načítavam diagram…</span><span role="timer" aria-live="off">00:00:00</span></div>
         <div id="detail-error" class="error" role="alert" hidden></div>
         <div id="detail-warnings" class="warnings" hidden></div>
         <section id="attributes-panel" class="detail-panel" aria-label="Vlastnosti"></section>
@@ -71,29 +90,58 @@
             <div id="inspector-divider" class="pane-divider" role="separator" aria-controls="class-inspector" aria-orientation="vertical" aria-label="Šírka detailu" tabindex="0" title="Šírka detailu: potiahni alebo použi šípky"></div>
             <aside id="class-inspector" aria-label="Detail prvku diagramu" hidden>
               <button id="close-inspector" aria-label="Zavrieť detail prvku">×</button>
+              <span class="dock-inspector" role="group" aria-label="Poloha panela vlastností">
+                <button type="button" data-position="bottom" title="Panel dole" aria-label="Panel dole" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 20 20"><rect x="2" y="3" width="16" height="14" rx="2"/><path d="M3 11h14v5H3z"/></svg></button>
+                <button type="button" data-position="right" title="Panel vpravo" aria-label="Panel vpravo" aria-pressed="true"><svg aria-hidden="true" viewBox="0 0 20 20"><rect x="2" y="3" width="16" height="14" rx="2"/><path d="M11 4h6v12h-6z"/></svg></button>
+              </span>
               <strong id="inspector-name"></strong>
               <div id="inspector-fields" aria-live="polite"></div>
             </aside>
           </div>
         </section>
-        <details id="object-relations" class="detail-panel" hidden><summary>Súvislosti <span id="relations-count"></span></summary><div id="relations-panel"></div></details>
+        <details id="object-relations" class="detail-panel" hidden><summary>Prepojenia <span id="relations-count"></span></summary><div id="relations-panel"></div></details>
       </article>
+      </section>
+      <template id="compare-template"><section class="window-pane extra-pane">
+        <div class="window-tabs" role="tablist"></div>
+        <header class="detail-header pane-heading" hidden><span data-pane-type></span><button class="pane-name"></button>
+          <button data-command="refresh" title="Znova načítať tento diagram">↻ Obnoviť</button>
+          <button data-command="favorite" aria-label="Obľúbený diagram" aria-pressed="false">☆</button></header>
+        <div class="diagram-toolbar">
+          <label><input type="search" placeholder="Nájsť text v diagrame" aria-label="Nájsť text v diagrame"></label>
+          <span class="pane-matches muted"></span>
+          <span class="pane-zoom">
+          <button data-command="out" aria-label="Oddialiť diagram">−</button>
+          <button data-command="in" aria-label="Priblížiť diagram">+</button>
+          <button data-command="fit">Celý diagram</button>
+          </span>
+        </div>
+        <div class="diagram-notice" role="status"></div>
+        <div class="diagram-stage"><div class="diagram" tabindex="0" aria-label="Diagram na porovnanie"></div></div>
+      </section></template>
+      </div>
     </section>
   </main>
-  <dialog id="reader-dialog" aria-labelledby="reader-heading">
-    <h2 id="reader-heading">Lokálny Reader</h2>
+  <dialog id="reader-dialog" closedby="any" aria-labelledby="reader-heading">
+    <div class="dialog-heading">
+      <h2 id="reader-heading">Lokálny Reader</h2>
+      <button id="reader-close" type="button" aria-label="Zavrieť dialóg" title="Zavrieť dialóg">×</button>
+    </div>
     <p>Po zatvorení poslednej karty sa Reader vypne automaticky. Rozbehnutý export nechá dobehnúť.</p>
     <p id="reader-status" role="status"></p>
     <button id="reader-restart">Reštartovať Reader</button>
     <button id="reader-stop">Vypnúť Reader</button>
-    <button id="reader-close">Zavrieť</button>
   </dialog>
-  <dialog id="export-dialog" aria-labelledby="export-heading">
-    <h2 id="export-heading">Markdown export celého modelu</h2>
+  <dialog id="export-dialog" closedby="any" aria-labelledby="export-heading">
+    <div class="dialog-heading">
+      <h2 id="export-heading">Markdown export celého modelu</h2>
+      <button id="export-close" type="button" aria-label="Zavrieť dialóg" title="Zavrieť dialóg">×</button>
+    </div>
     <p>Export beží na pozadí. Priebeh uvidíš v hornej lište. Kartu môžeš zavrieť, ale Reader nechaj spustený.</p>
     <label class="field">Cieľový priečinok<input id="export-folder" readonly placeholder="Predvolený: SelectReader\exports"></label>
     <div class="export-actions">
       <button id="export-browse">Vybrať priečinok…</button>
+      <button id="export-open-folder" type="button">Otvoriť priečinok</button>
       <button id="export-default" hidden>Použiť predvolený</button>
     </div>
     <p id="export-status" role="status"></p>
@@ -102,12 +150,11 @@
       <button id="export-start">Spustiť export</button>
       <button id="export-resume" hidden>Pokračovať</button>
       <button id="export-stop" hidden>Zastaviť export</button>
-      <button id="export-close">Zavrieť</button>
     </footer>
   </dialog>
-  <dialog id="picker">
+  <dialog id="picker" closedby="any">
     <form id="picker-form">
-      <div class="dialog-heading"><div><span class="eyebrow">ZDROJ ÚDAJOV</span><h2>Otvoriť model</h2></div><button id="close-picker" type="button" aria-label="Zatvoriť">×</button></div>
+      <div class="dialog-heading"><div><span class="eyebrow">ZDROJ ÚDAJOV</span><h2>Otvoriť model</h2></div><button id="close-picker" type="button" aria-label="Zavrieť dialóg" title="Zavrieť dialóg">×</button></div>
       <section id="recent-section" hidden><h3>Naposledy otvorené · otvoriť online</h3><div id="recent-models"></div></section>
       <label class="field">Server<input id="server" list="servers" placeholder="Názov servera" required autocomplete="off"><datalist id="servers"></datalist></label>
       <label class="field">Repozitár<select id="repository" required disabled><option value="">Najprv načítaj repozitáre</option></select></label>
@@ -116,7 +163,7 @@
       <p class="muted" id="model-limitation">Vyber model a otvor ho. Geometria diagramov sa zobrazuje zjednodušene podľa uložených súradníc, bez zmien na serveri.</p>
       <div id="picker-status" class="muted" role="status"></div>
       <div id="picker-error" class="error" role="alert" hidden></div>
-      <section id="history-section" hidden><h3>Lokálne kópie · otvoriť offline</h3><div id="history"></div></section>
+      <section id="history-section" hidden><h3>Lokálne kópie</h3><p>Uložené detaily otvoríš aj bez siete. Chýbajúce Reader dočíta zo servera.</p><div id="history"></div></section>
       <details class="authentication"><summary>Diagnostika Windows pripojenia</summary>
         <p>Použije sa existujúce sieťové prihlásenie Windows k zdieľaniu enabler.</p>
         <button id="windows-connect" type="button">Overiť Windows pripojenie</button>

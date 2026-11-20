@@ -11,7 +11,7 @@ import { authenticateWindowsShare, WindowsShareError } from './windows-smb.mjs';
 import { listModels, ModelReadError } from './direct-models.mjs';
 import { loadNativeCatalog, loadNativeDetail } from './native-content.mjs';
 import { ExportJob } from './model-export.mjs';
-import { chooseExportFolder } from './export-folder.mjs';
+import { chooseExportFolder, openExportFolder } from './export-folder.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 
@@ -59,7 +59,7 @@ export class Reader {
         `${this.usingCachedIndex ? 'Zahrnuté sú aj názvy z uloženej kópie. ' : ''}Vyhľadáva sa v načítaných názvoch a otvorených detailoch.${this.catalogComplete ? '' : ` Index ešte nie je úplný. ${this.status.current}`}`,
     };
   }
-  async openOffline(selection) {
+  async openOffline(selection, detailLoader = loadNativeDetail) {
     const cached = await this.cache.load(selection);
     if (!cached) throw Object.assign(new Error('Pre tento model zatiaľ neexistuje lokálna kópia.'), { status: 404 });
     const entries = new Map(cached.entries.map(entry => [entry.id, entry]));
@@ -73,6 +73,8 @@ export class Reader {
     this.catalogComplete = cached.complete;
     this.detailsComplete = cached.detailsComplete;
     this.offline = true;
+    this.detailLoader = detailLoader;
+    this.nativeContext = null;
     this.status = { phase: 'idle', current: '', error: null };
     this.pendingDetails = new Map();
     this.retryCatalog = null;
@@ -182,11 +184,13 @@ export class Reader {
     const needsUml = ['_Ent2_ClassDiagram', '_Ent2_ObjectSequenceDiagram'].includes(this.entries.get(id)?.nativeClass) &&
       detail?.diagram?.schemaVersion !== 3;
     if (detail && !refresh && (this.offline || !needsUml)) return { ...detail, cached: true };
-    if (this.offline) throw Object.assign(new Error('Detail nemožno načítať zo servera v offline režime. Otvor model online.'), { status: refresh ? 409 : 404 });
+    const entry = this.entries.get(id);
+    if (this.offline && (!this.selection?.modelId || !entry?.nativeClass || !entry.nativeId))
+      throw Object.assign(new Error('Tejto staršej kópii chýbajú identifikátory potrebné na dočítanie detailu. Otvor model online.'), { status: refresh ? 409 : 404 });
     if (this.pendingDetails.has(id)) return this.pendingDetails.get(id);
     const generation = this.generation, selection = this.selection;
     const operation = (async () => {
-      const result = await this.detailLoader(selection, this.entries.get(id), this.nativeContext);
+      const result = await this.detailLoader(selection, entry, this.nativeContext);
       if (generation !== this.generation) throw Object.assign(new Error('Výber modelu sa počas čítania zmenil.'), { status: 409 });
       this.details.set(id, result);
       for (const relation of result.relations ?? []) if (!this.entries.has(relation.item.id)) this.entries.set(relation.item.id, relation.item);
@@ -223,7 +227,7 @@ export function createServer(reader, cache, {
   directModels = listModels,
   nativeCatalog = loadNativeCatalog, nativeDetail = loadNativeDetail,
   markdownExport = new ExportJob(path.join(root, 'exports')),
-  folderPicker = chooseExportFolder,
+  folderPicker = chooseExportFolder, folderOpener = openExportFolder,
   onExit, idleMs = 15000,
 } = {}) {
   const views = new Set();
@@ -231,7 +235,6 @@ export function createServer(reader, cache, {
   const finish = command => {
     ending = true;
     clearTimeout(idleTimer);
-    for (const view of views) view.end();
     onExit(command);
   };
   const scheduleIdle = () => {
@@ -262,17 +265,17 @@ export function createServer(reader, cache, {
       const url = new URL(request.url, `http://127.0.0.1:${activePort}`);
       if (ending) return json(response, 503, {error:'Reader sa ukončuje.'});
       if (request.method === 'GET') {
-        if (url.pathname === '/api/presence' && onExit) {
-          if (request.headers['sec-fetch-site'] !== 'same-origin') return json(response,403,{error:'Vyžaduje sa lokálne rozhranie.'});
-          clearTimeout(idleTimer);
-          response.writeHead(200, {'Content-Type':'text/event-stream','Cache-Control':'no-store'});
-          response.write(': connected\n\n');
-          views.add(response);
-          response.once('close', () => { views.delete(response); scheduleIdle(); });
-          return;
-        }
         if (url.pathname === '/api/health') return json(response, 200, { app: 'select-architect-reader', version: 2, transport: 'direct-tcp' });
-        if (url.pathname === '/api/state') return json(response, 200, { ...reader.state(), markdownExport: markdownExport.state, lifecycle: !!onExit });
+        if (url.pathname === '/api/state') {
+          if (onExit && url.searchParams.has('view')) {
+            if (request.headers['sec-fetch-site'] !== 'same-origin') return json(response,403,{error:'Vyžaduje sa lokálne rozhranie.'});
+            const view = url.searchParams.get('view');
+            if (!/^[0-9a-f-]{36}$/i.test(view)) return json(response,400,{error:'Neplatný identifikátor karty.'});
+            views.add(view);
+            clearTimeout(idleTimer);
+          }
+          return json(response, 200, { ...reader.state(), markdownExport: markdownExport.state, lifecycle: !!onExit });
+        }
         if (url.pathname === '/api/current-identity') {
           const identity = await identityProvider();
           return json(response, 200, {
@@ -300,7 +303,6 @@ export function createServer(reader, cache, {
           '/': ['index.html', 'text/html'], '/app.mjs': ['app.mjs', 'text/javascript'],
           '/diagram.mjs': ['diagram.mjs', 'text/javascript'], '/style.css': ['style.css', 'text/css'],
           '/uml.mjs': ['uml.mjs', 'text/javascript'],
-          '/presence.js': ['presence.js', 'text/javascript'],
         };
         const asset = assets[url.pathname];
         if (asset) {
@@ -313,6 +315,11 @@ export function createServer(reader, cache, {
       if (request.method !== 'POST') return json(response, 405, { error: 'Nepodporovaná metóda.' });
       if (!request.headers['content-type']?.startsWith('application/json')) return json(response, 415, { error: 'Vyžaduje sa application/json.' });
       const input = await body(request);
+      if (onExit && url.pathname === '/api/reader/leave') {
+        if (!origins.includes(request.headers.origin)) return json(response,403,{error:'Vyžaduje sa lokálne rozhranie.'});
+        if (views.delete(input?.view)) scheduleIdle();
+        return json(response,200,{accepted:true});
+      }
       if (onExit && ['/api/reader/stop','/api/reader/restart'].includes(url.pathname)) {
         if (!origins.includes(request.headers.origin)) return json(response,403,{error:'Reader ovládajte iba z lokálneho rozhrania.'});
         if (markdownExport.state.active || pickingFolder) return json(response,409,{error:'Najprv dokonči alebo zastav export a zavri výber priečinka.'});
@@ -336,7 +343,7 @@ export function createServer(reader, cache, {
         }
         return json(response, 200, { removed: true });
       }
-      if (['/api/export/start', '/api/export/cancel', '/api/export/folder'].includes(url.pathname)) {
+      if (['/api/export/start', '/api/export/cancel', '/api/export/folder', '/api/export/open-folder'].includes(url.pathname)) {
         if (!origins.includes(request.headers.origin)) return json(response, 403, { error: 'Export ovládajte iba z lokálneho rozhrania.' });
         if (url.pathname.endsWith('/folder')) {
           if (pickingFolder || markdownExport.state.active) return json(response, 409, {error:'Výber priečinka teraz nie je dostupný.'});
@@ -351,6 +358,10 @@ export function createServer(reader, cache, {
         else {
           if (input.folder && input.folder !== selectedExportFolder)
             return json(response, 400, {error:'Vyber cieľový priečinok znova.'});
+          if (url.pathname.endsWith('/open-folder')) {
+            await folderOpener(input.folder || markdownExport.base, !input.folder);
+            return json(response, 200, {opened:true});
+          }
           markdownExport.start(reader, input.resume === true, input.folder || markdownExport.base);
         }
         return json(response, 202, markdownExport.state);
@@ -428,7 +439,10 @@ export function createServer(reader, cache, {
       if (url.pathname === '/api/open' || url.pathname === '/api/catalog/missing') {
         const selection = validateSelection(input);
         const missingOnly = url.pathname === '/api/catalog/missing';
-        if (!missingOnly && input.offline === true) await reader.openOffline(selection);
+        if (!missingOnly && input.offline === true) {
+          if (selection.modelId && !origins.includes(request.headers.origin)) return json(response, 403, { error: 'Model otvárajte iba z lokálneho rozhrania.' });
+          await reader.openOffline(selection, nativeDetail);
+        }
         else {
           if (!origins.includes(request.headers.origin)) return json(response, 403, { error: 'Model otvárajte iba z lokálneho rozhrania.' });
           await reader.openNative(selection, nativeCatalog, nativeDetail, logger, missingOnly);

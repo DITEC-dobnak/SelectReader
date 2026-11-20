@@ -291,7 +291,9 @@ export async function loadNativeDetail(selection, entry, context, options = {}) 
 export async function withNativeDetails(selection, context, action, { exportMode = false, classCache, ...options } = {}) {
   return withDatastore(selection.server, selection.repository, async ({ exchange, identity, decodeText }) => {
     const resolved = await modelContext(exchange, identity, selection, decodeText);
-    if (resolved.contextId.toString('hex') !== context) throw new ModelReadError('MODEL_CONTEXT_CHANGED', 'Kontext modelu sa zmenil. Otvor model znova.', 409);
+    // A snapshot pins the model ID, but has no live session context to compare.
+    if (!(context === null && selection.modelId) && resolved.contextId.toString('hex') !== context)
+      throw new ModelReadError('MODEL_CONTEXT_CHANGED', 'Kontext modelu sa zmenil. Otvor model znova.', 409);
     const contextId = resolved.contextId;
     const objects = new Map(), valuesByObject = new Map(), relationDefinitions = new Map(), orderedCache = new Map();
     const valuesFor = async (object, semantic = false) => {

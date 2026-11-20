@@ -20,6 +20,13 @@ test('SQD and CLD scrolling stops at document edges, accounting for the visible 
       Diagram.prototype.update.call(diagram);
       assert.deepEqual(diagram.box.slice(0, 2), expected);
     }
+    diagram.svg.getBoundingClientRect = () => ({left:300,width:800,height:500});
+    for (const [dividerWidth, dividerLeft, expectedX] of [[6,900,660],[6,740,740],[0,0,560]]) {
+      diagram.inspectorDivider = {getBoundingClientRect:()=>({width:dividerWidth,left:dividerLeft})};
+      diagram.box = [2000,3000,400,200];
+      Diagram.prototype.update.call(diagram);
+      assert.deepEqual(diagram.box,[expectedX,1750,400,200]);
+    }
   }
 });
 

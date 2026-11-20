@@ -54,6 +54,9 @@ test('reads text documents and RTF as inert text, including escaped accents and 
   assert.equal(rtfText(String.raw`{\rtf1\ansi{\fonttbl{\f0 Arial;}}Text \'8aabl\'f3na\par \u381?iados\u357?.}`),
     'Text Šablóna\nŽiadosť.');
   assert.equal(documentText(Buffer.from([0, 1, 2])), null);
+  assert.equal(documentText(Buffer.from([0x0c])), '');
+  assert.equal(documentText(Buffer.from([0x01])), null);
+  assert.equal(documentText(Buffer.from('A')), 'A');
   assert.equal(documentText(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('Žiadosť')])), 'Žiadosť');
   assert.throws(() => rtfText('{\\rtf1 broken'), /Unbalanced/);
 });

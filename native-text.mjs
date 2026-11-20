@@ -71,6 +71,8 @@ export function rtfText(source) {
 }
 
 export function documentText(buffer, decode = value => western.decode(value)) {
+  // A document containing only a form feed has no printable content.
+  if (buffer.length === 1 && buffer[0] === 0x0c) return '';
   let text;
   if (buffer.subarray(0, 3).equals(Buffer.from([0xef, 0xbb, 0xbf]))) text = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(3));
   else if (buffer.subarray(0, 2).equals(Buffer.from([0xff, 0xfe]))) text = new TextDecoder('utf-16le', { fatal: true }).decode(buffer.subarray(2));

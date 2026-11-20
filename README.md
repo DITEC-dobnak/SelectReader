@@ -82,9 +82,9 @@ Diagnostické knižnice nie sú súčasťou aplikácie.
 
 ## Spustenie
 
-1. Dvojklik na [Start.cmd](Start.cmd), alebo `npm start`.
+1. Dvojklik na [Start.cmd](Start.cmd) otvorí prehliadač a pridá modrú ikonu **S** do oblasti oznámení pri hodinách. Kliknutím na ňu zobrazíš konzolu; minimalizovaním alebo krížikom ju opäť skryješ bez vypnutia Readera. Pri dvojkliku na `.cmd` môže Windows krátko zobraziť samotný spúšťač. Pre štart úplne bez tohto bliknutia použi [Start.vbs](Start.vbs). `npm start` naďalej vypisuje správy do terminálu.
 2. Otvorí sa **http://127.0.0.1:4317**.
-3. **Vybrať model** automaticky načíta repozitáre predvoleného servera.
+3. V dialógu **Vybrať model** napíš názov servera či IPv4 adresu alebo rozbaľ pole **Server** a vyber server z naposledy otvorených modelov. Každý server sa ponúka raz, od najnovšie použitého. Repozitáre sa načítajú automaticky po potvrdení poľa. Ak je pole prázdne, dialóg sprístupní uložené modely bez pripájania k serveru.
    Po potvrdení zmeny servera sa zoznam obnoví. Hore sú naposledy otvorené
    modely na opätovné online otvorenie jedným klikom.
 4. Vyber repozitár; modely sa načítajú automaticky. Pri chybe znova otvor dialóg
@@ -93,15 +93,18 @@ Diagnostické knižnice nie sú súčasťou aplikácie.
    **Overiť Windows pripojenie** je iba kontrola zdieľania, nie nutný predkrok.
 5. Vyber model a klikni **Otvoriť model**. Index načítava názvy na pozadí.
    Kým načítavanie beží, pri počte objektov vidíš koliesko, aktuálny typ a prípadný opakovaný pokus. „Čiastočný katalóg“ sám osebe neznamená, že načítavanie ešte beží.
-   Stredové tlačidlo **Pripojiť k serveru** sa zobrazuje iba bez otvoreného modelu.
+   Na pripojenie slúži tlačidlo **Vybrať model** vpravo hore, aj keď ešte nie je otvorený žiadny model.
    Detail a diagram sa načítajú kliknutím na výsledok; opakované otvorenie
    už používa lokálnu kópiu. Pri opätovnom online otvorení sa uložený index
    zobrazí hneď a overuje sa na pozadí. Staršie názvy sú výslovne označené;
    zmazané položky sa odstránia až po úplnom úspešnom novom načítaní.
 6. Pre už uložené dáta zvoľ lokálnu kópiu v spodnej časti dialógu.
+   Uložený detail sa otvorí bez siete. Ak detail chýba, Reader overí identitu pôvodného modelu, dočíta iba vybraný detail cez Windows pripojenie a uloží ho do tej istej kópie. Neobnovuje celý katalóg. Staršie kópie bez natívnych identifikátorov treba na doplnenie otvoriť online.
    **Zmazať kópiu** vyžaduje potvrdenie, zatvorí prípadný aktívny model
    a odstráni len jeho lokálnu kópiu. Server ani zoznam nedávnych modelov nemení.
    Voliteľné overenie Windows pripojenia nájdeš v zbalenej diagnostike dole.
+
+Dialógy **Reader**, **Export modelu** a **Vybrať model** zavrieš krížikom **×** vpravo hore, kliknutím mimo okna alebo klávesom **Esc**. Zatvorenie dialógu exportu nezastaví prebiehajúci export.
 
 Typ diagramu sa prepína jedným klikom: **Sequence**, **Class**, **Use Case**,
 potom ostatné dostupné typy abecedne. Predvolené sú **sekvenčné diagramy (SQD)**.
@@ -115,39 +118,62 @@ v pravej lište. V online modeli tlačidlo **↻ Obnoviť** vedľa názvu znova 
 iba aktuálny diagram zo servera, aj po chybe spojenia. V lište sú
 pri SQD aj volajúce diagramy. Pri objektoch bez diagramu sú
 vlastnosti priamo v detaile a pod nimi rozbaliteľné súvislosti.
+Pravá lišta prekrýva pravý okraj diagramu; jej otvorenie, zatvorenie ani zmena šírky nemenia mierku alebo polohu diagramu.
+Nový diagram preberie poslednú voľbu v danom okne: vlastnosti dole, vpravo alebo zatvorené. Bez uloženej voľby sa zobrazia vpravo. Kliknutím na názov diagramu znovu otvoríš zatvorený panel. Pri návrate na už otvorenú kartu sa zachová jej zvolený prvok alebo zatvorený panel.
+Vedľa **×** prepneš polohu vlastností dvomi ikonami: zvýraznený pás v ikone označuje spodný alebo pravý okraj. Aktívna poloha je podfarbená a pamätá sa samostatne pre každé okno. Potiahnutím hornej hranice spodného panela zmeníš jeho výšku.
+V spodnom paneli sa posúvajú len vlastnosti a súvislosti. Krížik a prepínač polohy zostávajú v hlavičke vždy dostupné.
+Pri otvorenej lište môžeš diagram posunúť doľava až tak, aby bol celý jeho pravý okraj viditeľný vedľa lišty. Rozsah posunu sa riadi šírkou lišty v konkrétnom okne.
 Šírku ľavého katalógu aj pravej lišty zmeníš potiahnutím zvislého oddeľovača
 alebo šípkami po jeho výbere cez Tab. Prehliadač si obe šírky zapamätá.
-Pri načítaní alebo obnovení detailu vidíš čas od začiatku daného načítania (hh:mm:ss).
+Katalóg zbalíš cez **«** vedľa vyhľadávania a rozbalíš cez **»**. **Ctrl+K** ho rozbalí a zameria vyhľadávanie.
+Pri otvorení aj obnovení diagramu každé okno samostatne zobrazuje otáčajúce sa koliesko, „Načítavam diagram…“ a čas od začiatku svojho načítania (hh:mm:ss).
+V ďalších oknách sa indikátor zobrazuje priamo v ploche diagramu pod vyhľadávaním.
 SQD sa otvorí od začiatku s textom krokov približne **12 pt**, bez ohľadu na dĺžku diagramu. Ostatné diagramy sa otvoria celé.
 Pri otvorenom diagrame **Ctrl +** približuje a **Ctrl −** odďaľuje diagram namiesto celej stránky. Fungujú aj klávesy na numerickej klávesnici.
 **Tmavý režim** v hornej lište prepína aj farby SQD a CLD. Pred prvou voľbou sa
 použije nastavenie systému; vlastná voľba zostane uložená v prehliadači.
 HTML popisy v detaile prvku a v pravej lište sa zobrazujú ako čistý text bez formátovacích značiek.
 V SQD označuje šípka **↗** odkaz na iný sekvenčný diagram. Klik naň zobrazí detail v pravej lište.
-Až odkaz **↗ názov diagramu** v lište otvorí cieľ. Sekcia **Volané z SQD** rovnakými odkazmi zobrazí diagramy, ktoré
+Až odkaz **↗ názov diagramu** v lište otvorí cieľ. Prepojenia SQD sa začnú načítavať už pri otvorení diagramu, aj pri zatvorenom paneli. Panel použije ten istý výsledok bez ďalšieho čítania. Sekcia **Prepojenia** rovnakými odkazmi zobrazí diagramy, ktoré
 odkazujú na cieľ cez `probe`; otvoríš ju aj kliknutím na názov otvoreného SQD.
 Klik
 na text alebo šípku správy otvorí v pravej lište jej celý opis zo slovníka
 bez odchodu zo sekvenčného diagramu. Klik
-na hlavičku triedy zobrazí detail; až **Otvoriť súvisiaci CLD** vyhľadá diagram podľa jej skutočných symbolov. Dvojklik na text v SQD aj CLD označí slovo bez presmerovania. Pri viacerých
-cieľoch sa zobrazí výber; **Späť na diagram** sa vráti k zdrojovému diagramu.
+na hlavičku triedy zobrazí vlastnosti a podľa jej symbolov automaticky vyhľadá súvisiace triedne diagramy. Každý sa zobrazí ako **↗ názov CLD** a otvorí sa až kliknutím na odkaz. Dvojklik na text v SQD aj CLD označí slovo bez presmerovania. **Späť na diagram** sa vráti k zdrojovému diagramu.
 Na SQD aj CLD koliesko posúva zvisle, Shift+koliesko vodorovne a Ctrl+koliesko
-mení mierku. Touchpad podporuje posun v oboch osiach. Na oboch diagramoch
+mení mierku jemne (najviac faktorom 1,08 na udalosť, pri malých pohyboch touchpadu menej). Všetky typy diagramov majú kompaktnú hlavičku už počas načítania. Touchpad podporuje posun v oboch osiach. Na oboch diagramoch
 je stereotyp `«user»` zelený a `«interface»` modrý s bielym písmom.
 Text v diagrame aj v pravej lište označíš ťahaním a skopíruješ cez **Ctrl+C**.
-Diagram posunieš ťahaním mimo textu alebo kolieskom. Posun sa zastaví na okrajoch diagramu. Ak sa celý diagram
+Naľavo od obsahu diagramu je voľný okraj, kde môžeš začať výber textu.
+V hornej lište sú zľava **Výber/Ruka**, **Rozloženie diagramov**, **Tmavý režim**, **Export**, **Vybrať model** a **Reader…**. Dialóg Readera zatvoríš krížikom vpravo hore bez vypnutia aplikácie.
+Prepínač kurzora je spoločný pre všetky okná: šípka znamená **Výber**, biela ruka **Posun**. Modré zvýraznenie označuje aktívny režim. Vo výbere môžeš začať ťahať aj na prázdnom mieste:
+texty zasiahnuté obdĺžnikom dostanú modré pozadie v oboch smeroch ťahania a **Ctrl+C** ich skopíruje po riadkoch.
+Priamo v texte ostáva bežný výber znakov. S rukou posunieš diagram ťahaním aj za text; funguje aj koliesko. Posun sa zastaví na okrajoch diagramu. Ak sa celý diagram
 zmestí do okna, zostane zarovnaný vľavo hore a nedá sa odsunúť do prázdna.
-Pri otvorenom diagrame sa hlavička automaticky zmenší. V dvojstĺpcovom
+Kartu Readera v prehliadači spoznáš podľa bieleho **S** na modrom pozadí.
+Pod ikonou rozdelenej obrazovky **Rozloženie diagramov** vyber jedno okno, dve vedľa seba alebo štyri v mriežke 2 × 2. Kliknutie v katalógu otvára diagram v hlavnom (ľavom hornom) okne. Do iného okna pretiahni diagram z katalógu alebo z karty. Každé okno má vlastné karty, hlavičku, obnovu, obľúbené a zoom. Prechod na menej okien skryté karty nezatvára. Po obnovení stránky sa pamätá rozloženie, nie otvorené karty.
+
+Na počítači zaberá rozdelený pohľad celú výšku od hlavičky po spodný okraj okna, aj keď ešte nie je otvorený žiadny diagram.
+Prázdna pracovná plocha má rovnaké pozadie pri jednom, dvoch aj štyroch oknách, v svetlom aj tmavom režime.
+Pri ťahaní diagramu z katalógu alebo presúvaní karty sa možné cieľové okno pod kurzorom zvýrazní modrou vrstvou s nápisom **Pusti diagram sem**.
+Hlavička sekvenčného alebo triedneho diagramu používa rovnakú ikonu ako katalóg: **⇄** alebo **▤**. Celý názov typu sa zobrazí po prejdení kurzorom nad ikonou.
+Potiahnutím zvislej hranice zmeníš šírku stĺpcov. V rozložení 2 × 2 môžeš potiahnuť aj vodorovnú hranicu a zmeniť výšku riadkov. Hranicu môžeš vybrať tabulátorom a posúvať šípkami; nastavené pomery zostanú aj po obnovení stránky.
+V rozložení 2 × 2 potiahni bod na priesečníku hraníc, ak chceš meniť šírku aj výšku naraz.
+Pretiahnutie otvorenej karty do iného okna ju **presunie** – v pôvodnom okne nezostane kópia. Pretiahnutie položky z katalógu otvorí diagram v cieľovom okne bez zatvárania iných kariet.
+Každé okno má vlastnú lištu vlastností. Môžeš porovnávať detaily vedľa seba: otvorenie, zmena šírky ani zatvorenie jednej lišty neovplyvní ostatné.
+Každé okno má vlastné vyhľadávanie s počtom zhôd a napravo ovládanie mierky **−**, **+** a **Celý diagram**. Hľadaný text zostáva na príslušnej karte.
+Horná lišta aj riadok modelu zostávajú kompaktné bez ohľadu na to, či je diagram otvorený. V dvojstĺpcovom
 pracovnom priestore sa diagramy otvárajú na kartách nad hlavičkou. Každá karta má celý názov diagramu a vlastné × na zatvorenie. Opätovný výber
 toho istého diagramu aktivuje jeho kartu. Karty zachovávajú posun, zoom a hľadanie;
 zatvoríš ich cez × alebo prostredným tlačidlom myši. Pri zameranej karte fungujú
 šípky ←/→, Home/End a Delete. Pri zmene modelu sa karty zatvoria. V dvojstĺpcovom
 zobrazení využije plátno zvyšnú výšku okna; katalóg sa posúva samostatne.
 V CLD klik na triedu, atribút alebo operáciu otvorí detail v pravej lište bez
-opustenia diagramu. V sekcii **Vlastnosti** vidíš `Description` a `Attribute declaration`, ak ich prvok má.
-V **Ďalšie vlastnosti** hviezdička ☆ pripne pole k predvoleným a ★ ho odopne. Voľba sa pamätá v prehliadači aj pre ďalšie prvky s rovnakým poľom. Sekciu **Súvislosti** rozbalíš priamo v lište;
+opustenia diagramu. `Description` a `Attribute declaration` sú predvolene pripnuté (★), ak ich prvok má. Kliknutím na hviezdičku ich môžeš presunúť medzi **Ďalšie vlastnosti**.
+V **Ďalšie vlastnosti** hviezdička ☆ pripne pole k predvoleným a ★ ho odopne. Voľba sa pamätá v prehliadači aj pre ďalšie prvky s rovnakým poľom. Sekciu **Všetky prepojenia** rozbalíš priamo v lište;
 aj výber súvisiaceho prvku zobrazí jeho detail v tej istej lište bez zmeny diagramu. „Binárna príloha“ označuje konkrétne
 netextové pole, nie celý atribút ani jeho deklaráciu.
+Ak dokument obsahuje iba bajt `0x0C` (zalomenie strany), nemá zobraziteľný text a Reader ho zobrazí ako prázdnu hodnotu. Iné jednobajtové hodnoty sa týmto pravidlom nemenia.
 
 Po štarte sa žiadny model ani externý program na čítanie modelov nespúšťa.
 Konzolu nechaj otvorenú; ukončenie je **Ctrl+C**. Server počúva iba na
@@ -317,20 +343,22 @@ externé fonty, CDN, telemetriu ani cloudové API.
 
 ## Markdown export modelu
 
-V otvorenom online modeli zvoľ **Export modelu do .md**. Tlačidlom
+V otvorenom modeli zvoľ **Export modelu do .md**. Export môžeš spustiť aj z lokálnej kópie s identifikátorom modelu. Sám sa pripojí k pôvodnému serveru a vyčíta celý model, nielen lokálne uložené diagramy. Tlačidlom
 **Vybrať priečinok…** otvorí bežný dialóg Prieskumníka Windows s adresným riadkom;
 cieľ môžeš vybrať alebo vložiť jeho cestu. Bez výberu sa použije
-`SelectReader\exports`. Potom klikni na **Spustiť export**. Pokračovanie
+`SelectReader\exports`. **Otvoriť priečinok** zobrazí zvolený alebo predvolený cieľ v Prieskumníkovi Windows aj počas exportu. Export spustíš cez **Spustiť export**. Pokračovanie
 rozpracovaného exportu vždy používa jeho pôvodný priečinok.
+Výber priečinka sa otvorí nad aktívnym prehliadačom. Pri otvorení cieľa Reader obnoví aj minimalizované okno Prieskumníka a overí, či je v popredí práve okno so správnou cestou. Ak Windows fokus nepovolí, dialóg oznámi, že priečinok je otvorený na pozadí.
 Po spustení alebo pokračovaní sa dialóg zatvorí. Horné tlačidlo exportu
 ukazuje fázu a počet spracovaných položiek; kliknutím otvoríš podrobnosti.
 Pri chybe sa celé tlačidlo s nápisom **Export: chyba** zafarbí načerveno. Po úspešnom spustení pokračovania sa vráti k bežnej farbe.
 V lište aj v detaile je čas exportu (hh:mm:ss). Pokračovanie ho počíta ďalej
 bez času stráveného prestávkou; nový export začína od nuly.
-Zatvorenie karty export nezastaví. Po zatvorení poslednej karty Reader počká
+Uspatie počítača, vypnutie displeja ani dočasná strata spojenia nespúšťajú automatické vypnutie. Reader čaká na oznámenie prehliadača o zatvorení karty, nie na prerušenie spojenia. Ak prehliadač spadne bez oznámenia, Reader môže zostať spustený.
+Zatvorenie karty export nezastaví. Po oznámení o zatvorení poslednej karty Reader počká
 15 sekúnd (obnovenie stránky ho nevypne); ak beží export, vypne sa až po jeho
 skončení. Ďalšia otvorená karta automatické vypnutie zruší. Cez **Reader…**
-v hornej lište ho možno ručne vypnúť alebo reštartovať pre všetky karty.
+v hornej lište ho možno ručne vypnúť alebo reštartovať pre všetky karty bez ďalšieho potvrdenia.
 Po reštarte otvor model znova; počas exportu sú tieto operácie blokované.
 Pri prerušení TCP spojenia počas čítania diagramov alebo referencií export
 zopakuje práve rozčítaný objekt na novom spojení (najviac 10 opakovaní).
@@ -352,8 +380,8 @@ Pri SQD nenačítava údaje o vzhľade hlavičiek, ktoré sa do Markdownu nezapi
 Nespúšťa COM, Select Architect ani pôvodný exportný skript. Súbežne môže bežať
 len jeden export. Zatvorenie dialógu ho nezastaví.
 
-Každý nový beh má vlastný priečinok `exports/export-…/<model>_<repozitár>_<RRRR-MM-DD>/`
-(napríklad `Model_Example_2026-11-19`). Pri pokračovaní zostáva dátum pôvodného behu. V priečinku je koreňový
+Hotový export sa uloží priamo do zvoleného cieľa ako `<model>_<repozitár>_<RRRR-MM-DD>` bez nadradeného `export-…`.
+Ak názov už existuje, použije sa prvý voľný s príponou `_2`, `_3` atď. Existujúce exporty zostanú nezmenené. Pri pokračovaní zostáva dátum pôvodného behu. V priečinku je koreňový
 `index.md`, indexmi typov, stránkami diagramov, `Events.md` a `Other classes.md`.
 Súbory sú UTF-8 bez BOM s LF a relatívnymi odkazmi. Ide o samostatnú
 implementáciu formátu: napríklad ID kotiev, výber pri duplicitných názvoch,

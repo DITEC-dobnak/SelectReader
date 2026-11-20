@@ -41,16 +41,32 @@ function svgElement(tag, attributes = {}) {
 export class Diagram {
   constructor(container, notice, onOpen) {
     this.container = container;
+    this.inspectorDivider = container.closest('.diagram-stage')?.querySelector('.inspector-divider');
     this.notice = notice;
     this.onOpen = onOpen;
+    this.selectedLabels = [];
+    this.labelBackgrounds = new Map();
     this.svg = svgElement('svg', { role: 'img', 'aria-label': 'Diagram modelu' });
     container.replaceChildren(this.svg);
+    container.addEventListener('copy', event => {
+      if (!this.selectedLabels.length || !document.getSelection().isCollapsed) return;
+      event.clipboardData.setData('text/plain', this.selectedLabels.map(node => node.textContent).join('\n'));
+      event.preventDefault();
+    });
+    container.addEventListener('keydown', event => {
+      if (event.key === 'Escape') this.clearLabels();
+    });
     new ResizeObserver(() => { if (this.box) this.update(); }).observe(this.svg);
     this.svg.addEventListener('wheel', event => {
       event.preventDefault();
       if (!this.box) return;
       if (event.ctrlKey || !['class', 'sequence'].includes(this.data?.uml?.kind)) {
-        if (event.deltaY) this.zoom(event.deltaY > 0 ? 1.15 : 1 / 1.15, event.clientX, event.clientY);
+        if (event.deltaY) {
+          const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? this.svg.clientHeight : 1;
+          const factor = event.ctrlKey ? 1.08 ** Math.max(-1, Math.min(1, event.deltaY * unit / 100))
+            : event.deltaY > 0 ? 1.15 : 1 / 1.15;
+          this.zoom(factor, event.clientX, event.clientY);
+        }
       } else {
         const bounds = this.svg.getBoundingClientRect();
         const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? bounds.height : 1;
@@ -66,8 +82,11 @@ export class Diagram {
       clearTimeout(this.pendingTextClick);
       if (!event.isPrimary || event.button !== 0 || !this.box) return;
       panned = false;
-      if (event.target.closest('text')) return;
+      this.clearLabels();
+      if (!this.hand && event.target.closest('text')) return;
       event.preventDefault();
+      container.focus({preventScroll:true});
+      document.getSelection().removeAllRanges();
       drag = { x: event.clientX, y: event.clientY, box: [...this.box], id: event.pointerId };
       event.target.setPointerCapture(event.pointerId);
     });
@@ -78,12 +97,28 @@ export class Diagram {
       const x = event.clientX - drag.x, y = event.clientY - drag.y;
       if (!panned && Math.abs(x) + Math.abs(y) <= 5) return;
       panned = true;
+      if (!this.hand) {
+        const left = Math.min(drag.x,event.clientX), top = Math.min(drag.y,event.clientY);
+        const right = Math.max(drag.x,event.clientX), bottom = Math.max(drag.y,event.clientY);
+        if (!drag.frame) {
+          drag.frame = document.createElement('div');
+          drag.frame.className = 'text-marquee';
+          container.append(drag.frame);
+          drag.labels = Array.from(this.svg.querySelectorAll('text'), node => ({node, rect:node.getBoundingClientRect()}))
+            .filter(({rect:r}) => r.width && r.height && r.right >= rect.left && r.left <= rect.right && r.bottom >= rect.top && r.top <= rect.bottom)
+            .sort((a,b) => a.rect.top-b.rect.top || a.rect.left-b.rect.left);
+        }
+        Object.assign(drag.frame.style, {left:`${left-rect.left}px`,top:`${top-rect.top}px`,width:`${right-left}px`,height:`${bottom-top}px`});
+        this.selectLabels(drag.labels.filter(({rect:r}) => r.right >= left && r.left <= right && r.bottom >= top && r.top <= bottom).map(({node}) => node));
+        return;
+      }
       this.svg.classList.add('panning');
       this.box = [drag.box[0] - x * scale, drag.box[1] - y * scale, drag.box[2], drag.box[3]];
       this.update();
     });
     const endDrag = event => {
       if (event.pointerId !== drag?.id) return;
+      drag.frame?.remove();
       drag = null;
       this.svg.classList.remove('panning');
     };
@@ -91,7 +126,7 @@ export class Diagram {
     this.svg.addEventListener('pointerup', endDrag);
     this.svg.addEventListener('pointercancel', endDrag);
     this.svg.addEventListener('click', event => {
-      if (panned || event.button !== 0 || (event.target.closest('text') && !document.getSelection().isCollapsed)) return;
+      if (this.hand || panned || event.button !== 0 || (event.target.closest('text') && !document.getSelection().isCollapsed)) return;
       const target = event.target.closest('[data-target]');
       if (!target) return;
       if (['sequence', 'class'].includes(this.data?.uml?.kind) && event.detail && event.target.closest('text')) {
@@ -102,8 +137,37 @@ export class Diagram {
       } else this.onOpen(target.dataset.target, target.dataset.diagramLink);
     });
   }
+  clearLabels() {
+    this.selectLabels([]);
+  }
+  selectLabels(labels) {
+    const next = new Set(labels);
+    for (const [node, background] of this.labelBackgrounds) {
+      if (next.has(node)) continue;
+      node.classList.remove('area-selected');
+      background.remove();
+      this.labelBackgrounds.delete(node);
+    }
+    for (const node of labels) {
+      if (this.labelBackgrounds.has(node)) continue;
+      const {x,y,width,height} = node.getBBox();
+      const background = svgElement('rect', {x,y,width,height,class:'label-selection-bg','aria-hidden':'true'});
+      if (node.hasAttribute('transform')) background.setAttribute('transform',node.getAttribute('transform'));
+      node.before(background);
+      node.classList.add('area-selected');
+      this.labelBackgrounds.set(node,background);
+    }
+    this.selectedLabels = labels;
+  }
+  setHand(active) {
+    clearTimeout(this.pendingTextClick);
+    this.clearLabels();
+    this.hand = active;
+    this.svg.classList.toggle('hand-tool', active);
+  }
   render(data) {
     clearTimeout(this.pendingTextClick);
+    this.clearLabels();
     this.data = data;
     this.svg.replaceChildren();
     this.svg.setAttribute('preserveAspectRatio', data.uml ? 'xMinYMin meet' : 'xMidYMid meet');
@@ -111,7 +175,9 @@ export class Diagram {
     this.svg.classList.toggle('select-class', data.uml?.kind === 'class');
     if (data.uml) {
       const rendered = renderUml(this.svg, data.uml, this.onOpen, { detailedSteps: true });
-      this.initial = rendered.box;
+      const [left, top, docWidth, docHeight] = rendered.box;
+      const leftGutter = 24;
+      this.initial = [left - leftGutter, top, docWidth + leftGutter, docHeight];
       if (data.uml.kind === 'sequence') {
         const { width, height } = this.svg.getBoundingClientRect();
         // SQD step labels are 12 SVG units; 12 CSS points are 16 CSS pixels.
@@ -186,24 +252,29 @@ export class Diagram {
       const width = Math.max(...bounds.map(b => b[0] + b[2])) - minX || 1;
       const height = Math.max(...bounds.map(b => b[1] + b[3])) - minY || 1;
       const padding = Math.max(width, height) * .04;
-      this.initial = [minX - padding, minY - padding, width + padding * 2, height + padding * 2];
+      const leftPadding = padding * 1.5;
+      this.initial = [minX - leftPadding, minY - padding, width + leftPadding + padding, height + padding * 2];
       this.fit();
     } else {
       this.box = this.initial = null;
       this.svg.removeAttribute('viewBox');
     }
     this.notice.textContent = `${symbols.length} symbolov · zjednodušené zobrazenie geometrie UML. ` +
-      (skipped ? `${skipped} symbolov bez podporovanej geometrie alebo spojenia nebolo vykreslených; obsah nájdeš v Súvislostiach.` : 'Kliknutím na prvok otvoríš jeho detail.');
+      (skipped ? `${skipped} symbolov bez podporovanej geometrie alebo spojenia nebolo vykreslených; obsah nájdeš v Prepojeniach.` : 'Kliknutím na prvok otvoríš jeho detail.');
   }
   update() {
     if (!this.box) return;
     if (this.data?.uml) {
-      const { width, height } = this.svg.getBoundingClientRect();
+      const { left: screenLeft, top: screenTop, width, height } = this.svg.getBoundingClientRect();
       if (width > 0 && height > 0) {
         const [left, top, docWidth, docHeight] = this.initial;
         const scale = Math.max(this.box[2] / width, this.box[3] / height);
-        this.box[0] = Math.max(left, Math.min(this.box[0], left + docWidth - width * scale));
-        this.box[1] = Math.max(top, Math.min(this.box[1], top + docHeight - height * scale));
+        const divider = this.inspectorDivider?.getBoundingClientRect();
+        const bottom = this.container?.parentElement?.dataset.dock === 'bottom';
+        const visibleWidth = !bottom && divider?.width ? Math.max(0, Math.min(width, divider.left - screenLeft)) : width;
+        const visibleHeight = bottom && divider?.height ? Math.max(0, Math.min(height, divider.top - screenTop)) : height;
+        this.box[0] = Math.max(left, Math.min(this.box[0], left + docWidth - visibleWidth * scale));
+        this.box[1] = Math.max(top, Math.min(this.box[1], top + docHeight - visibleHeight * scale));
       }
     }
     this.svg.setAttribute('viewBox', this.box.join(' '));

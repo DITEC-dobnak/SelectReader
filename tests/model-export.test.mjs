@@ -15,6 +15,20 @@ const catalog=async(s,options)=>{
 const detail=e=>({attributes:{Description:'Test'},relations:e.id==='d0'?[{item:entries[1]}]:[],
   diagram:{symbols:[{id:'one',fields:{Type:'SD::State',Name:'State'},relations:[]}]}});
 
+test('local copy can start a server export without reopening the model',async ()=>{
+  const reader={offline:true,selection};
+  const job=new ExportJob('base',async target=>{
+    assert.deepEqual(target,selection);
+    return {count:2};
+  });
+  assert.throws(()=>job.start({offline:true,selection:{...selection,modelId:null}}),{status:409});
+  job.start(reader);
+  assert.throws(()=>job.start(reader),{status:409});
+  await job.finished;
+  assert.equal(job.state.phase,'complete');
+  assert.equal(reader.offline,true);
+});
+
 test('job automatically resumes the same checkpoint once and remains stoppable during backoff',async ()=>{
   for(const outcome of ['success','fail','cancel']){
     const calls=[];
@@ -60,11 +74,12 @@ test('whole model uses fresh diagram list, publishes only on success and resumes
   await assert.rejects(exportModel(selection,base,{catalog,concurrency:1,progress:p=>{if(p.run)run=p.run;},
     session:async(s,ctx,fn)=>fn(async e=>{if(e.id==='d1')throw Error('interrupted');return detail(e);})}),/interrupted/);
   assert.deepEqual(await readdir(run),['.reader-work']);
+  const created=(await stat(run)).birthtime;
   const seen=[];
   const result=await exportModel(selection,base,{catalog,resume:run,session:async(s,ctx,fn)=>fn(async e=>{seen.push(e.id);return detail(e);})});
-  const created=(await stat(run)).birthtime;
   const date=created.toLocaleDateString('sv-SE');
-  assert.equal(path.basename(result.path),`Model_Repo_${date}`);
+  assert.equal(result.path,path.join(base,`Model_Repo_${date}`));
+  assert.deepEqual(await readdir(base),[path.basename(result.path)]);
   assert.deepEqual(seen,['d1']);
   const get=file=>readFile(path.join(result.path,file),'utf8');
   assert.match(await get('index.md'),/\[State Diagrams \(2\)\]\(<State Diagrams\/index.md>\)/);
@@ -73,6 +88,10 @@ test('whole model uses fresh diagram list, publishes only on success and resumes
   assert.match(await get('Events.md'),/\| Event \| Description \| Used in \|/);
   assert.match(await get('Other classes.md'),/^# Other classes\n/);
   await assert.rejects(exportModel(selection,base,{catalog:async()=>({complete:false})}),/nie je úplný/);
+  const repeat=()=>exportModel(selection,base,{catalog,session:async(s,ctx,fn)=>fn(detail)});
+  const copies=await Promise.all([repeat(),repeat()]);
+  assert.deepEqual(copies.map(r=>r.path).sort(),[`${result.path}_2`,`${result.path}_3`]);
+  assert.deepEqual((await readdir(base)).sort(),[result,...copies].map(r=>path.basename(r.path)).sort());
 });
 
 test('page names protect indexes and handle case, reserved names, separators and collisions',()=>{
