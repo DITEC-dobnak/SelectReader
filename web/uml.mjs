@@ -56,24 +56,37 @@ function lines(value, width = 48) {
   return result;
 }
 
-export function classLayout(data) {
+export function classLayout(data, measure = value => String(value).length * 9) {
   const nodes = [], groups = [];
   const namespaces = [...new Set(data.classes.map(item => item.namespace))].sort();
+  const columnWidths = [340,340];
+  const sections = namespaces.map(namespace => ({
+    namespace, members: data.classes.filter(item => item.namespace === namespace).sort((a,b)=>a.name.localeCompare(b.name))
+  }));
+  for (const {members} of sections) members.forEach((item,i)=>{
+    const column = i % 2;
+    const fit = (value,font) => {
+      columnWidths[column] = Math.max(columnWidths[column], Math.ceil(measure(value,font)) + 24);
+    };
+    fit(item.name,`${item.isAbstract?'italic ':''}600 16px Arial`);
+    if (item.stereotype) fit(`«${item.stereotype}»`,'13px Arial');
+    for (const m of item.attributes) fit(memberLabel(m,false),'14px Arial');
+    for (const m of item.operations) fit(memberLabel(m,true,item.signature),`${m.isAbstract?'italic ':''}14px Arial`);
+  });
   let y = 55;
-  for (const namespace of namespaces) {
-    const members = data.classes.filter(item => item.namespace === namespace).sort((a, b) => a.name.localeCompare(b.name));
+  for (const {namespace,members} of sections) {
     const top = y;
     for (let start = 0; start < members.length; start += 2) {
       const row = members.slice(start, start + 2);
       let rowHeight = 0;
       for (const [column, item] of row.entries()) {
         const height = 88 + Math.max(1, item.attributes.length) * 21 + Math.max(1, item.operations.length) * 21;
-        nodes.push({ ...item, x: 45 + column * 440, y, width: 340, height });
+        nodes.push({ ...item, x: 45 + column * (columnWidths[0]+100), y, width: columnWidths[column], height });
         rowHeight = Math.max(rowHeight, height);
       }
       y += rowHeight + 130;
     }
-    if (namespace) groups.push({ name: namespace, x: 20, y: top - 35, width: Math.min(2, members.length) * 440 - 50, height: y - top - 65 });
+    if (namespace) groups.push({ name: namespace, x: 20, y: top - 35, width: 50 + columnWidths[0] + (members.length>1 ? 100+columnWidths[1] : 0), height: y - top - 65 });
   }
   return { nodes, groups, width: Math.max(500, ...nodes.map(node => node.x + node.width + 90)), height: y + 40 };
 }
@@ -108,7 +121,9 @@ function memberLabel(member, operation, signature) {
 }
 
 function classDiagram(svg, data, onOpen) {
-  const layout = classLayout(data), missing = [];
+  const ctx = document.createElement('canvas').getContext('2d');
+  const measure = (value,font) => { ctx.font=font; return ctx.measureText(value).width; };
+  const layout = classLayout(data,measure), missing = [], occupied = [];
   const defs = element('defs');
   for (const [id, path, fill] of [
     ['uml-inheritance', 'M 0 0 L 12 6 L 0 12 Z', '#fff'],
@@ -141,11 +156,21 @@ function classDiagram(svg, data, onOpen) {
       fill: 'none', stroke: '#315b73', 'stroke-width': 1.5,
       ...(edge.type === 'dependency' ? { 'stroke-dasharray': '6 4', 'marker-end': 'url(#uml-dependency)' } :
         edge.type === 'generalization' ? { 'marker-end': 'url(#uml-inheritance)' } : {}) }));
-    text(group, edge.label ?? '', mid, (start[1] + finish[1]) / 2 - 7);
+    if (edge.label) {
+      const onVertical = self || start[1] !== finish[1];
+      const x = (self ? start[0]+70 : mid) + (onVertical ? 8 : 0);
+      let y = (start[1]+finish[1])/2 - (onVertical ? 0 : 7);
+      const width = measure(edge.label,'14px Arial'), left = onVertical ? x : x-width/2;
+      while (occupied.some(b=>left < b.right+2 && left+width > b.left-2 && Math.abs(y-b.y)<18)) y-=18;
+      occupied.push({left,right:left+width,y});
+      text(group,edge.label,x,y,{'text-anchor':onVertical?'start':'middle'});
+    }
     for (const [index, end] of (edge.ends ?? []).entries()) {
       const point = index ? finish : start;
-      text(group, [end.name, end.multiplicity].filter(Boolean).join(' '), point[0] + (index ? -8 : 8), point[1] - 8,
-        { 'text-anchor': index ? 'end' : 'start', 'font-size': 12 });
+      const side = self || vertical || (index ? !right : right) ? 1 : -1;
+      const dy = vertical && !self ? ((index===0)===(finish[1]>start[1]) ? 18 : -10) : -8;
+      text(group, [end.name, end.multiplicity].filter(Boolean).join(' '), point[0] + side*8, point[1] + dy,
+        { 'text-anchor': side>0 ? 'start' : 'end', 'font-size': 12 });
     }
     svg.append(group);
   }

@@ -26,7 +26,8 @@ Nie je potrebné `npm install`.
   hľadanie textu a prechod na detail položky. Ide o zjednodušené zobrazenie,
   nie identickú typografiu a všetky UML dekorácie Selectu.
 - **Class a sequence majú samostatné moderné UML zobrazenie**, nie všeobecné
-  obdĺžniky. Triedy zobrazujú atribúty, typy, operácie a parametre; asociácie
+  obdĺžniky. Šírka tried v CLD sa prispôsobuje textu atribútov a operácií vrátane parametrov.
+  Čísla spojení sú odsadené od čiary. Asociácie
   načítajú obe roly a kardinality priamo podľa ID z diagramu. Dedičnosť
   smeruje od podtriedy k nadradenej triede podľa skutočných rolí, závislosť
   od závislého prvku k cieľu. Nie sú závislé od úplnosti globálneho indexu.
@@ -104,7 +105,7 @@ Diagnostické knižnice nie sú súčasťou aplikácie.
    a odstráni len jeho lokálnu kópiu. Server ani zoznam nedávnych modelov nemení.
    Voliteľné overenie Windows pripojenia nájdeš v zbalenej diagnostike dole.
 
-Dialógy **Reader**, **Export modelu** a **Vybrať model** zavrieš krížikom **×** vpravo hore, kliknutím mimo okna alebo klávesom **Esc**. Zatvorenie dialógu exportu nezastaví prebiehajúci export.
+Dialógy **Export modelu** a **Vybrať model** zavrieš krížikom **×** vpravo hore, kliknutím mimo okna alebo klávesom **Esc**. Zatvorenie dialógu exportu nezastaví prebiehajúci export.
 
 Typ diagramu sa prepína jedným klikom: **Sequence**, **Class**, **Use Case**,
 potom ostatné dostupné typy abecedne. Predvolené sú **sekvenčné diagramy (SQD)**.
@@ -145,7 +146,7 @@ mení mierku jemne (najviac faktorom 1,08 na udalosť, pri malých pohyboch touc
 je stereotyp `«user»` zelený a `«interface»` modrý s bielym písmom.
 Text v diagrame aj v pravej lište označíš ťahaním a skopíruješ cez **Ctrl+C**.
 Naľavo od obsahu diagramu je voľný okraj, kde môžeš začať výber textu.
-V hornej lište sú zľava **Výber/Ruka**, **Rozloženie diagramov**, **Tmavý režim**, **Export**, **Vybrať model** a **Reader…**. Dialóg Readera zatvoríš krížikom vpravo hore bez vypnutia aplikácie.
+V hornej lište sú zľava **Výber/Ruka**, **Rozloženie diagramov**, **Tmavý režim**, **Export**, **Vybrať model**, **Reštartovať Reader** a **Vypnúť Reader**.
 Prepínač kurzora je spoločný pre všetky okná: šípka znamená **Výber**, biela ruka **Posun**. Modré zvýraznenie označuje aktívny režim. Vo výbere môžeš začať ťahať aj na prázdnom mieste:
 texty zasiahnuté obdĺžnikom dostanú modré pozadie v oboch smeroch ťahania a **Ctrl+C** ich skopíruje po riadkoch.
 Priamo v texte ostáva bežný výber znakov. S rukou posunieš diagram ťahaním aj za text; funguje aj koliesko. Posun sa zastaví na okrajoch diagramu. Ak sa celý diagram
@@ -357,8 +358,7 @@ bez času stráveného prestávkou; nový export začína od nuly.
 Uspatie počítača, vypnutie displeja ani dočasná strata spojenia nespúšťajú automatické vypnutie. Reader čaká na oznámenie prehliadača o zatvorení karty, nie na prerušenie spojenia. Ak prehliadač spadne bez oznámenia, Reader môže zostať spustený.
 Zatvorenie karty export nezastaví. Po oznámení o zatvorení poslednej karty Reader počká
 15 sekúnd (obnovenie stránky ho nevypne); ak beží export, vypne sa až po jeho
-skončení. Ďalšia otvorená karta automatické vypnutie zruší. Cez **Reader…**
-v hornej lište ho možno ručne vypnúť alebo reštartovať pre všetky karty bez ďalšieho potvrdenia.
+skončení. Ďalšia otvorená karta automatické vypnutie zruší. Tlačidlá v hornej lište Reader reštartujú alebo vypnú pre všetky karty bez ďalšieho potvrdenia.
 Po reštarte otvor model znova; počas exportu sú tieto operácie blokované.
 Pri prerušení TCP spojenia počas čítania diagramov alebo referencií export
 zopakuje práve rozčítaný objekt na novom spojení (najviac 10 opakovaní).

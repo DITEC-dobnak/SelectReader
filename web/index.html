@@ -28,8 +28,10 @@
     <button id="theme-toggle" aria-pressed="false">Tmavý režim</button>
     <button id="export-md" aria-haspopup="dialog" aria-controls="export-dialog" disabled>Export modelu do .md</button>
     <button id="choose-model" class="primary">Vybrať model</button>
-    <button id="reader-controls" hidden>Reader…</button>
+    <button id="reader-restart" type="button" hidden>Reštartovať Reader</button>
+    <button id="reader-stop" type="button" hidden>Vypnúť Reader</button>
   </header>
+  <div id="reader-status" role="status"></div>
   <section class="modelbar" aria-label="Otvorený model">
     <div><span class="eyebrow">PRACOVNÝ PRIESTOR</span><strong id="model-name">Žiadny otvorený model</strong></div>
     <div class="model-meta">
@@ -122,16 +124,6 @@
       </div>
     </section>
   </main>
-  <dialog id="reader-dialog" closedby="any" aria-labelledby="reader-heading">
-    <div class="dialog-heading">
-      <h2 id="reader-heading">Lokálny Reader</h2>
-      <button id="reader-close" type="button" aria-label="Zavrieť dialóg" title="Zavrieť dialóg">×</button>
-    </div>
-    <p>Po zatvorení poslednej karty sa Reader vypne automaticky. Rozbehnutý export nechá dobehnúť.</p>
-    <p id="reader-status" role="status"></p>
-    <button id="reader-restart">Reštartovať Reader</button>
-    <button id="reader-stop">Vypnúť Reader</button>
-  </dialog>
   <dialog id="export-dialog" closedby="any" aria-labelledby="export-heading">
     <div class="dialog-heading">
       <h2 id="export-heading">Markdown export celého modelu</h2>
