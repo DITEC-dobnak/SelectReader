@@ -182,6 +182,7 @@ function createPane(number) {
   const inspect = (id,link) => inspectDiagramElement(link === 'callers' ? active : id,link,stage);
   const view = new Diagram(find('.diagram'),notice,inspect);
   const search = find('input[type=search]'), matches = find('.pane-matches');
+  setupDiagramSearch(view,search,matches);
   search.addEventListener('input', () => {
     if (tabs.has(active)) tabs.get(active).query = search.value;
     updateDiagramSearch(view,search,matches);
@@ -202,6 +203,9 @@ function createPane(number) {
     closeInspector(stage);
     clearTimeout(view.pendingTextClick);
     view.clearLabels();
+    view.matches = [];
+    view.matchIndex = -1;
+    for (const button of root.querySelectorAll('[data-search-direction]')) button.disabled = true;
     view.data = view.box = view.initial = null;
     view.svg.replaceChildren();
     view.svg.removeAttribute('viewBox');
@@ -403,11 +407,19 @@ function loadFavorites() {
 
 const viewId = crypto.randomUUID();
 let leaving = false;
+let exportActive = false, exportStarting = false;
+window.addEventListener('beforeunload', event => {
+  if (!state?.desktop || !(exportActive || exportStarting) || leaving) return;
+  event.preventDefault();
+  event.returnValue = '';
+});
 window.addEventListener('pagehide', event => {
   if (event.persisted || leaving) return;
   leaving = true;
   clearTimeout(pollTimer);
-  navigator.sendBeacon('/api/reader/leave', new Blob([JSON.stringify({view:viewId})], {type:'application/json'}));
+  navigator.sendBeacon('/api/reader/leave', new Blob([JSON.stringify({
+    view:viewId, desktopClose:!!state?.desktop, confirmedExport:exportActive || exportStarting
+  })], {type:'application/json'}));
 });
 for (const command of ['stop','restart']) {
   $(`reader-${command}`).onclick = async () => {
@@ -480,7 +492,7 @@ function renderState() {
   if (status.error && status.phase !== 'partial') showError(new Error(status.error));
   $('search-scope-note').hidden = !selection || state.catalogComplete;
   $('search-scope-note').title = status.phase === 'partial' ? status.error : state.searchScope;
-  setText('coverage', selection ? `${state.searchScope} ${state.catalogComplete ? '' : 'Katalóg nie je úplný.'} ${state.detailCount} uložených detailov.` : 'Vyber model zo servera alebo otvor lokálnu kópiu.');
+  setText('coverage', selection ? `${state.searchScope} ${state.catalogComplete ? '' : 'Katalóg nie je úplný.'} ${state.missingTypeCount ? 'Chýbajúce typy sa automaticky dočítajú o 5 sekúnd.' : ''} ${state.detailCount} uložených detailov.` : 'Vyber model zo servera alebo otvor lokálnu kópiu.');
   let diagrams = 0, dictionary = 0;
   for (const [type, count] of Object.entries(state.types)) {
     if (/\bdiagram\b/i.test(type)) diagrams += count; else dictionary += count;
@@ -508,6 +520,7 @@ setInterval(() => {
   for (const {timer,start} of loadingClocks.values()) timer.textContent=formatElapsed(performance.now()-start);
 }, 1000);
 function renderExport(job) {
+    exportActive = !!job.active;
     const canExport = !!state?.selection?.modelId;
     $('export-md').disabled = !canExport && job.phase === 'idle';
     $('export-start').disabled = !canExport || !!job.active || pickingExportFolder;
@@ -549,11 +562,14 @@ function renderExport(job) {
   });
   for (const [id, command, resume] of [['export-start','start',false],['export-resume','start',true],['export-stop','cancel',false]])
     $(id).addEventListener('click',handle(async () => {
-      const job = await api(`/api/export/${command}`,{
-        resume, ...(command === 'start' && !resume ? { folder: $('export-folder').value } : {})
-      });
-      renderExport(job);
-      if (command === 'start') $('export-dialog').close();
+      exportStarting = command === 'start';
+      try {
+        const job = await api(`/api/export/${command}`,{
+          resume, ...(command === 'start' && !resume ? { folder: $('export-folder').value } : {})
+        });
+        renderExport(job);
+        if (command === 'start') $('export-dialog').close();
+      } finally { exportStarting = false; }
     }, 'export-error'));
 
 const diagramPriority = ['Object Sequence Diagram', 'Class Diagram', 'Use Case Diagram'];
@@ -1470,7 +1486,22 @@ $('fit').addEventListener('click', () => diagram.fit());
 function updateDiagramSearch(view, input, matches) {
   const count = view.find(input.value);
   matches.textContent = input.value ? `${count} zhôd` : '';
+  for (const button of input.closest('.diagram-toolbar').querySelectorAll('[data-search-direction]')) button.disabled = !count;
 }
+function setupDiagramSearch(view, input, matches) {
+  const move = direction => {
+    const result = view.nextMatch(direction);
+    if (result) matches.textContent = `${result.index} / ${result.total}`;
+  };
+  for (const button of input.closest('.diagram-toolbar').querySelectorAll('[data-search-direction]'))
+    button.addEventListener('click', () => move(Number(button.dataset.searchDirection)));
+  input.addEventListener('keydown', event => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    move(event.shiftKey ? -1 : 1);
+  });
+}
+setupDiagramSearch(diagram,$('diagram-search'),$('diagram-matches'));
 $('diagram-search').addEventListener('input', () => updateDiagramSearch(diagram,$('diagram-search'),$('diagram-matches')));
 document.addEventListener('keydown', event => {
   if (event.ctrlKey && !event.altKey && !event.metaKey && !event.defaultPrevented &&

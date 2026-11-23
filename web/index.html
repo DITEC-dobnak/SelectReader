@@ -82,7 +82,10 @@
           <div class="diagram-toolbar">
             <button id="diagram-back" hidden>← Späť na diagram</button>
             <label><input id="diagram-search" type="search" placeholder="Nájsť text v diagrame" aria-label="Nájsť text v diagrame"></label>
-            <span id="diagram-matches" class="muted"></span><span class="top-spacer"></span>
+            <span id="diagram-matches" class="muted" aria-live="polite"></span>
+            <button type="button" data-search-direction="-1" aria-label="Predchádzajúca zhoda" title="Predchádzajúca zhoda (Shift+Enter)" disabled>↑</button>
+            <button type="button" data-search-direction="1" aria-label="Nasledujúca zhoda" title="Nasledujúca zhoda (Enter)" disabled>↓</button>
+            <span class="top-spacer"></span>
             <button id="zoom-out" aria-label="Oddialiť" title="Oddialiť (Ctrl −)">−</button><button id="zoom-in" aria-label="Priblížiť" title="Priblížiť (Ctrl +)">+</button><button id="fit">Celý diagram</button>
           </div>
           <div id="diagram-notice" class="diagram-notice"></div>
@@ -111,7 +114,9 @@
           <button data-command="favorite" aria-label="Obľúbený diagram" aria-pressed="false">☆</button></header>
         <div class="diagram-toolbar">
           <label><input type="search" placeholder="Nájsť text v diagrame" aria-label="Nájsť text v diagrame"></label>
-          <span class="pane-matches muted"></span>
+          <span class="pane-matches muted" aria-live="polite"></span>
+          <button type="button" data-search-direction="-1" aria-label="Predchádzajúca zhoda" title="Predchádzajúca zhoda (Shift+Enter)" disabled>↑</button>
+          <button type="button" data-search-direction="1" aria-label="Nasledujúca zhoda" title="Nasledujúca zhoda (Enter)" disabled>↓</button>
           <span class="pane-zoom">
           <button data-command="out" aria-label="Oddialiť diagram">−</button>
           <button data-command="in" aria-label="Priblížiť diagram">+</button>

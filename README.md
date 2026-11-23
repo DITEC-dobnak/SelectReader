@@ -67,7 +67,12 @@ opäť zaradí na koniec. Lišta zobrazí číslo pokusu aj kód predošlej chyb
 Čas opakovaných pokusov predlžuje desaťminútový rozpočet indexovania,
 najviac na hodinu. Nedokončené stránky nepridáva. Pri pretrvávajúcom
 výpadku pokračuje ďalším typom. Po dokončení čiastočného online priechodu odkaz
-**Dočítať chýbajúce typy (N)** načíta iba typy, ktoré zlyhali, s limitom 60 sekúnd už od prvého ručného pokusu. Úspešne načítané typy
+**Dočítať chýbajúce typy (N)** načíta iba typy, ktoré zlyhali, s limitom 60 sekúnd už od prvého pokusu.
+Reader spúšťa rovnaké dočítanie automaticky 5 sekúnd po dokončení čiastočného
+priechodu a opakuje ho až do úplného načítania alebo zmeny modelu. Počas
+priebehu sa pokusy neprekrývajú; ručné tlačidlo zostáva dostupné.
+Pri zmene schémy či inej chybe vyžadujúcej zásah sa opakovanie zastaví
+a zobrazí sa chyba. Úspešne načítané typy
 z otvoreného modelu zostanú zachované. **Načítať celý katalóg znova** spustí nový priechod od začiatku.
 Chýbajúca trieda sa zaloguje kódom bez identity,
 pri výsledkoch vyhľadávania sa zobrazí poznámka „Výsledky môžu byť neúplné“
@@ -82,6 +87,21 @@ Selectu a neobchádza práva.
 Diagnostické knižnice nie sú súčasťou aplikácie.
 
 ## Spustenie
+
+**Prenosná aplikácia pre Windows x64:** Rozbaľ celý `SelectReader-win-x64.zip`
+do zapisovateľného priečinka a dvojklikni na `SelectReader.exe`. Node.js je
+pribalený; netreba ho inštalovať ani nastavovať `PATH`. Okno bez kariet
+a adresného riadka používa nainštalovaný Microsoft Edge. Dáta modelov sa
+ukladajú do `.cache` pri aplikácii, profil okna do `%LOCALAPPDATA%\SelectReader\Edge`.
+Ľavý klik na modrú ikonu **S** pri hodinách otvorí konzolu. Ak je okno už
+zatvorené a ikona zostala, klikni na ňu pravým tlačidlom a vyber **Ukončiť Reader**.
+Táto voľba ukončí aj lokálny server; počas exportu sa vypnutie odmietne.
+
+**Vytvorenie ZIP zo zdrojov:** Na Windows x64 s Node.js 22+ spusti
+`powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Build-Portable.ps1`. Výsledok nájdeš
+v `dist\SelectReader-win-x64.zip`. Lokálne modely ani exporty sa nebalia.
+
+**Alternatívne spustenie zo zdrojov (vyžaduje Node.js):**
 
 1. Dvojklik na [Start.cmd](Start.cmd) otvorí prehliadač a pridá modrú ikonu **S** do oblasti oznámení pri hodinách. Kliknutím na ňu zobrazíš konzolu; minimalizovaním alebo krížikom ju opäť skryješ bez vypnutia Readera. Pri dvojkliku na `.cmd` môže Windows krátko zobraziť samotný spúšťač. Pre štart úplne bez tohto bliknutia použi [Start.vbs](Start.vbs). `npm start` naďalej vypisuje správy do terminálu.
 2. Otvorí sa **http://127.0.0.1:4317**.
@@ -144,6 +164,10 @@ na hlavičku triedy zobrazí vlastnosti a podľa jej symbolov automaticky vyhľa
 Na SQD aj CLD koliesko posúva zvisle, Shift+koliesko vodorovne a Ctrl+koliesko
 mení mierku jemne (najviac faktorom 1,08 na udalosť, pri malých pohyboch touchpadu menej). Všetky typy diagramov majú kompaktnú hlavičku už počas načítania. Touchpad podporuje posun v oboch osiach. Na oboch diagramoch
 je stereotyp `«user»` zelený a `«interface»` modrý s bielym písmom.
+Vyhľadávanie nad diagramom zvýrazní jednotlivé výskyty zobrazeného textu
+bez ohľadu na veľkosť písmen a diakritiku. Šípky ↑/↓ alebo Shift+Enter/Enter
+prechádzajú výsledky a posúvajú diagram na vybranú zhodu. Každé porovnávacie
+okno má vlastné vyhľadávanie.
 Text v diagrame aj v pravej lište označíš ťahaním a skopíruješ cez **Ctrl+C**.
 Naľavo od obsahu diagramu je voľný okraj, kde môžeš začať výber textu.
 V hornej lište sú zľava **Výber/Ruka**, **Rozloženie diagramov**, **Tmavý režim**, **Export**, **Vybrať model**, **Reštartovať Reader** a **Vypnúť Reader**.
@@ -356,9 +380,14 @@ Pri chybe sa celé tlačidlo s nápisom **Export: chyba** zafarbí načerveno. P
 V lište aj v detaile je čas exportu (hh:mm:ss). Pokračovanie ho počíta ďalej
 bez času stráveného prestávkou; nový export začína od nuly.
 Uspatie počítača, vypnutie displeja ani dočasná strata spojenia nespúšťajú automatické vypnutie. Reader čaká na oznámenie prehliadača o zatvorení karty, nie na prerušenie spojenia. Ak prehliadač spadne bez oznámenia, Reader môže zostať spustený.
-Zatvorenie karty export nezastaví. Po oznámení o zatvorení poslednej karty Reader počká
-15 sekúnd (obnovenie stránky ho nevypne); ak beží export, vypne sa až po jeho
-skončení. Ďalšia otvorená karta automatické vypnutie zruší. Tlačidlá v hornej lište Reader reštartujú alebo vypnú pre všetky karty bez ďalšieho potvrdenia.
+V prenosnej aplikácii zatvorenie posledného okna ukončí Reader približne po
+2 sekundách; toto krátke čakanie umožňuje obnovenie stránky bez vypnutia.
+Ak prebieha export, Edge pred zatvorením zobrazí potvrdenie; po potvrdení
+Reader export zastaví a ukončí sa po dokončení jeho prerušenia.
+Pri bežnom spustení v prehliadači zatvorenie karty export nezastaví a po
+zatvorení poslednej karty Reader počká 15 sekúnd; ak beží export, vypne sa
+až po jeho skončení. Ďalšia otvorená karta automatické vypnutie zruší.
+Tlačidlá v hornej lište Reader reštartujú alebo vypnú pre všetky karty bez ďalšieho potvrdenia.
 Po reštarte otvor model znova; počas exportu sú tieto operácie blokované.
 Pri prerušení TCP spojenia počas čítania diagramov alebo referencií export
 zopakuje práve rozčítaný objekt na novom spojení (najviac 10 opakovaní).

@@ -2,6 +2,8 @@ using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Drawing;
+using System.IO;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
@@ -13,10 +15,12 @@ public sealed class ReaderTray : IDisposable
         ScrollBars = ScrollBars.Both, WordWrap = false, BackColor = Color.FromArgb(25, 30, 40),
         ForeColor = Color.White };
     readonly NotifyIcon tray = new NotifyIcon { Text = "Select Reader" };
+    readonly ContextMenuStrip menu = new ContextMenuStrip();
     readonly Timer timer = new Timer { Interval = 200 };
     readonly ConcurrentQueue<string> output = new ConcurrentQueue<string>();
     readonly Icon icon;
     Process server;
+    readonly bool portable;
 
     [DllImport("user32.dll")]
     static extern bool DestroyIcon(IntPtr handle);
@@ -36,8 +40,9 @@ public sealed class ReaderTray : IDisposable
         }
     }
 
-    ReaderTray()
+    ReaderTray(bool portable)
     {
+        this.portable = portable;
         icon = MakeIcon();
         console.Icon = tray.Icon = icon;
         console.Controls.Add(log);
@@ -46,6 +51,9 @@ public sealed class ReaderTray : IDisposable
             if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; console.Hide(); }
         };
         tray.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) ShowConsole(); };
+        menu.Items.Add("Zobraziť konzolu", null, (s, e) => ShowConsole());
+        menu.Items.Add("Ukončiť Reader", null, (s, e) => RequestStop());
+        tray.ContextMenuStrip = menu;
         timer.Tick += (s, e) => CheckServer();
     }
 
@@ -58,7 +66,9 @@ public sealed class ReaderTray : IDisposable
 
     void Launch(bool open)
     {
-        var start = new ProcessStartInfo("node.exe", "server.mjs --serve" + (open ? " --open" : "")) {
+        string node = portable ? Path.Combine(Environment.CurrentDirectory, "runtime", "node.exe") : "node.exe";
+        var start = new ProcessStartInfo(node, "server.mjs --serve" + (portable ? " --desktop-mode" : "") +
+            (open ? (portable ? " --desktop" : " --open") : "")) {
             WorkingDirectory = Environment.CurrentDirectory, UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
@@ -70,6 +80,29 @@ public sealed class ReaderTray : IDisposable
         server.Start();
         server.BeginOutputReadLine();
         server.BeginErrorReadLine();
+    }
+
+    void RequestStop()
+    {
+        if (server == null || server.HasExited) return;
+        const string origin = "http://127.0.0.1:4317";
+        var request = (HttpWebRequest)WebRequest.Create(origin + "/api/reader/stop");
+        request.Method = "POST";
+        request.Proxy = null;
+        request.ContentType = "application/json";
+        request.Headers["Origin"] = origin;
+        request.Timeout = request.ReadWriteTimeout = 3000;
+        request.ContentLength = 2;
+        try {
+            using (var body = request.GetRequestStream()) body.Write(Encoding.ASCII.GetBytes("{}"), 0, 2);
+            using (request.GetResponse()) { }
+        } catch (WebException error) {
+            using (var response = error.Response as HttpWebResponse) {
+                string reason = response != null && response.StatusCode == HttpStatusCode.Conflict
+                    ? "Najprv dokonči alebo zastav export a zavri výber priečinka." : error.Message;
+                MessageBox.Show(reason, "Reader sa nepodarilo ukončiť", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
     }
 
     void CheckServer()
@@ -85,6 +118,7 @@ public sealed class ReaderTray : IDisposable
         server = null;
         if (code == 75) { Launch(false); return; }
         timer.Stop();
+        tray.Visible = false;
         if (code != 0) {
             ShowConsole();
             MessageBox.Show(console, "Reader sa nepodarilo spustiť alebo bol prerušený. Pozri výpis konzoly.",
@@ -95,9 +129,27 @@ public sealed class ReaderTray : IDisposable
 
     public static void Run()
     {
+        Run(false);
+    }
+
+    [STAThread]
+    static int Main()
+    {
+        try {
+            Environment.CurrentDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            Run(true);
+            return 0;
+        } catch (Exception error) {
+            MessageBox.Show(error.Message, "Select Reader", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 1;
+        }
+    }
+
+    static void Run(bool portable)
+    {
         Application.EnableVisualStyles();
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
-        using (var host = new ReaderTray()) {
+        using (var host = new ReaderTray(portable)) {
             host.Launch(true);
             host.tray.Visible = true;
             host.timer.Start();
@@ -110,6 +162,7 @@ public sealed class ReaderTray : IDisposable
         timer.Dispose();
         tray.Visible = false;
         tray.Dispose();
+        menu.Dispose();
         console.Dispose();
         icon.Dispose();
         if (server != null) server.Dispose();

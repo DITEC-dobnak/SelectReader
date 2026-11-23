@@ -8,17 +8,20 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Cache } from '../reader.mjs';
 import { createServer, Reader, currentWindowsIdentity } from '../server.mjs';
+import { ModelReadError } from '../direct-models.mjs';
 import { selection, diagram, item, snapshot } from './fixture.mjs';
 
 async function setup(t, options = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), 'select-reader-api-test-'));
-  const cache = new Cache(directory), reader = new Reader(cache);
+  const cache = new Cache(directory), reader = new Reader(cache, {retryDelay: options.retryDelay ?? 5000});
   const server = createServer(reader, cache, { port: 0, ...options });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`;
   const post = (url, data, headers = {}) => fetch(`${base}${url}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(data) });
   t.after(async () => {
+    reader.cancelRetry();
+    reader.controller?.abort();
     await new Promise(resolve => server.close(resolve));
     await cache.writes;
     await rm(directory, { recursive: true });
@@ -46,6 +49,104 @@ test('missing-only retries preserve fresh entries and narrow the next retry afte
   assert.deepEqual([...reader.entries.keys()], [diagram.id,item.id]);
   assert.equal(reader.catalogComplete,true);
   assert.equal((await post('/api/catalog/missing', target, headers)).status,409);
+});
+
+test('automatically retries only missing types after each completed partial pass and recovers from connection failure', async t => {
+  const modelId='00010002000000ff', classes=['_Ent2_A','_Ent2_B'], seen=[];
+  let release, started;
+  const waiting = new Promise(resolve => { started=resolve; });
+  const {reader,base,post}=await setup(t, {
+    retryDelay:30, logger:{error(){}},
+    nativeCatalog:async (_, {onReady,onBatch,retryClasses}) => {
+      seen.push(retryClasses ? [...retryClasses] : null);
+      if (seen.length === 2) throw new ModelReadError('TCP_TIMEOUT','Timeout');
+      onReady({modelId,contextId:'0001000200000011'});
+      if (seen.length === 1) {
+        onBatch([diagram]);
+        return {complete:false,schemaClasses:classes,errors:[{className:classes[1],code:'TCP_TIMEOUT'}]};
+      }
+      if (seen.length === 3) {
+        started();
+        await new Promise(resolve=>{release=resolve;});
+        onBatch([item]);
+        return {complete:false,schemaClasses:classes,errors:[{className:classes[1],code:'TCP_TIMEOUT'}]};
+      }
+      return {complete:true,schemaClasses:classes,errors:[]};
+    }
+  });
+  assert.equal((await post('/api/open',{...selection,modelId},{Origin:base})).status,200);
+  await waiting;
+  await new Promise(resolve=>setTimeout(resolve,80));
+  assert.equal(seen.length,3, 'no retries overlap');
+  release();
+  for(let i=0;i<30 && !reader.catalogComplete;i++) await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(reader.catalogComplete,true);
+  assert.deepEqual(seen,[null,[classes[1]],[classes[1]],[classes[1]]]);
+  assert.deepEqual([...reader.entries.keys()],[diagram.id,item.id]);
+  await new Promise(resolve=>setTimeout(resolve,60));
+  assert.equal(seen.length,4);
+});
+
+test('default automatic retry starts five seconds after the partial pass', async t => {
+  const modelId='00010002000000ff', classes=['_Ent2_A'];
+  let firstFinished, retryStarted;
+  const started = new Promise(resolve=>{retryStarted=resolve;});
+  const {reader,base,post}=await setup(t,{
+    nativeCatalog:async (_, {onReady,retryClasses}) => {
+      onReady({modelId,contextId:'0001000200000011'});
+      if (retryClasses) {
+        retryStarted(performance.now());
+        return {complete:true,schemaClasses:classes,errors:[]};
+      }
+      return {complete:false,schemaClasses:classes,errors:[{className:classes[0],code:'TCP_TIMEOUT'}]};
+    }
+  });
+  await post('/api/open',{...selection,modelId},{Origin:base});
+  await reader.job;
+  firstFinished=performance.now();
+  assert.ok((await started)-firstFinished >= 4900);
+  await reader.job;
+  assert.equal(reader.catalogComplete,true);
+});
+
+test('manual retry and closing the model cancel pending automatic retries', async t => {
+  const modelId='00010002000000ff', classes=['_Ent2_A'], seen=[];
+  const {reader,base,post}=await setup(t,{
+    retryDelay:80,
+    nativeCatalog:async (_, {onReady,retryClasses}) => {
+      seen.push(retryClasses ? [...retryClasses] : null);
+      onReady({modelId,contextId:'0001000200000011'});
+      return {complete:false,schemaClasses:classes,errors:[{className:classes[0],code:'TCP_TIMEOUT'}]};
+    }
+  });
+  const target={...selection,modelId}, headers={Origin:base};
+  await post('/api/open',target,headers);
+  await reader.job;
+  await post('/api/catalog/missing',target,headers);
+  await reader.job;
+  assert.equal(seen.length,2);
+  assert.equal((await post('/api/cache/remove',{...target,closeActive:true},headers)).status,200);
+  await new Promise(resolve=>setTimeout(resolve,120));
+  assert.equal(seen.length,2);
+  assert.equal(reader.selection,null);
+});
+
+test('schema changes stop automatic retries and report the error', async t => {
+  const modelId='00010002000000ff', classes=['_Ent2_A'];
+  let calls=0;
+  const {reader,base,post}=await setup(t,{
+    retryDelay:25, logger:{error(){}},
+    nativeCatalog:async (_, {onReady}) => {
+      if (++calls>1) throw new ModelReadError('MODEL_SCHEMA_CHANGED','Typy modelu sa zmenili.');
+      onReady({modelId,contextId:'0001000200000011'});
+      return {complete:false,schemaClasses:classes,errors:[{className:classes[0],code:'TCP_TIMEOUT'}]};
+    }
+  });
+  await post('/api/open',{...selection,modelId},{Origin:base});
+  await new Promise(resolve=>setTimeout(resolve,120));
+  assert.equal(calls,2);
+  assert.equal(reader.status.phase,'error');
+  assert.match(reader.status.error,/Typy modelu sa zmenili/);
 });
 
 test('startup is native-only, opens no model and exposes its actual capability', async t => {
@@ -93,6 +194,45 @@ test('silent or sleeping tabs survive idle timeout; only explicit last leave sch
   const c=await connect();job.state.active=false;
   await wait(120);assert.deepEqual(exits,[]);
   await c();await wait(160);assert.deepEqual(exits,['stop']);
+});
+
+test('desktop last close waits briefly for reload and cancels a confirmed export before stopping', async t => {
+  const exits=[], job={state:{active:true}, cancel() { this.cancelled = true; }};
+  const {base,post}=await setup(t,{desktop:true,desktopIdleMs:60,onExit:cmd=>exits.push(cmd),markdownExport:job});
+  const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+  const view=crypto.randomUUID();
+  const connect=()=>fetch(`${base}/api/state?view=${view}`,{headers:{'Sec-Fetch-Site':'same-origin'}});
+  const leave=()=>post('/api/reader/leave',{view,desktopClose:true,confirmedExport:true},{Origin:base});
+  await connect();
+  await leave();
+  await connect();
+  await wait(100);
+  assert.equal(job.cancelled,undefined);
+  assert.deepEqual(exits,[]);
+  await leave();
+  await wait(100);
+  assert.equal(job.cancelled,true);
+  assert.deepEqual(exits,[]);
+  job.state.active=false;
+  await wait(100);
+  assert.deepEqual(exits,['stop']);
+});
+
+test('desktop close does not cancel an export without confirmation or while another view remains', async t => {
+  const exits=[], job={state:{active:true}, cancel() { this.cancelled = true; }};
+  const {base,post}=await setup(t,{desktop:true,desktopIdleMs:40,onExit:cmd=>exits.push(cmd),markdownExport:job});
+  const views=[crypto.randomUUID(),crypto.randomUUID()];
+  for (const view of views) await fetch(`${base}/api/state?view=${view}`,{headers:{'Sec-Fetch-Site':'same-origin'}});
+  await post('/api/reader/leave',{view:views[0],desktopClose:true,confirmedExport:true},{Origin:base});
+  await new Promise(resolve=>setTimeout(resolve,60));
+  assert.equal(job.cancelled,undefined);
+  await post('/api/reader/leave',{view:views[1],desktopClose:true},{Origin:base});
+  await new Promise(resolve=>setTimeout(resolve,100));
+  assert.equal(job.cancelled,undefined);
+  assert.deepEqual(exits,[]);
+  job.state.active=false;
+  await new Promise(resolve=>setTimeout(resolve,80));
+  assert.deepEqual(exits,['stop']);
 });
 
 test('catalog lists all matches of one required type without an 80-item cutoff', async t => {

@@ -2,6 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classDiagramData, sequenceDiagramData } from '../uml-data.mjs';
 import { classLayout, sequenceLayout } from '../web/uml.mjs';
+import { textMatches } from '../web/diagram.mjs';
+
+test('diagram search finds each visible occurrence case-insensitively and without accents', () => {
+  assert.deepEqual(textMatches('Rozhodnutie a ROZHODNUTIE', 'rozhod'), [[0,5],[14,19]]);
+  assert.deepEqual(textMatches('PÔŽIČKA pôžička', 'pozicka'), [[0,6],[8,14]]);
+  assert.deepEqual(textMatches('😀 Rozhodnutie', 'rozhod'), [[3,8]]);
+  assert.deepEqual(textMatches('abcd', '  '), []);
+  assert.deepEqual(textMatches('ababa', 'aba'), [[0,2]]);
+});
 
 const item = (id, name, nativeClass) => ({ id, name, nativeClass, nativeId: id });
 const relation = (role, item) => ({ role, item });

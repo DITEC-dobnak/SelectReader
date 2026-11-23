@@ -41,6 +41,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .diagram svg [fill="#0000c0"] { fill: #304e92; }
   .diagram svg .symbol.match > rect { fill: #655019; stroke: #efd07a; }
   .diagram svg .symbol:hover .shape { fill: #344a65; }
+  .diagram svg rect.diagram-search-hit { fill: #745300; stroke: #ffd35a; }
+  .diagram svg rect.diagram-search-hit.current { fill: #9a4000; stroke: #ffba73; }
 }
 #export-md:not(:disabled):not([data-phase=idle]) { background: #edf4ff; border-color: #b0c9ee; font-variant-numeric: tabular-nums; }
 :root[data-theme] #export-md[data-phase=failed]:not(:disabled) { background: #ad2935; border-color: #ed8189; color: white; }
@@ -187,6 +189,10 @@ dialog::backdrop { background: #15284065; backdrop-filter: blur(3px); }
 .diagram .hand-tool.panning, .diagram .hand-tool.panning * { cursor: grabbing; }
 .text-marquee { position: absolute; pointer-events: none; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
 .diagram svg rect.label-selection-bg { fill: #245cce; stroke: none; pointer-events: none; }
+.diagram svg rect.diagram-search-hit { fill: #ffdb43; stroke: #916100; stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
+.diagram svg rect.diagram-search-hit.current { fill: #ff922b; stroke: #b24900; stroke-width: 2; }
+.diagram svg rect.diagram-search-hit.light-text { fill: #745300; stroke: #ffd35a; }
+.diagram svg rect.diagram-search-hit.light-text.current { fill: #9a4000; stroke: #ffba73; }
 :root .diagram svg text.area-selected { fill: white; }
 .diagram svg text::selection { background-color: #245cce; color: white; }
 #layout-settings { position: relative; }

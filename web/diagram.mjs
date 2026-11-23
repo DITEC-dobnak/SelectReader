@@ -3,6 +3,25 @@ import { descriptionText, renderUml } from './uml.mjs';
 const NS = 'http://www.w3.org/2000/svg';
 const normalized = text => String(text ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
+export function textMatches(text, query) {
+  const needle = normalized(query).trim();
+  if (!needle) return [];
+  let value = '', offsets = [], ends = [], index = 0;
+  for (const character of text) {
+    const part = normalized(character);
+    value += part;
+    for (let i = 0; i < part.length; i++) {
+      offsets.push(index);
+      ends.push(index + character.length - 1);
+    }
+    index += character.length;
+  }
+  const matches = [];
+  for (let from = 0, index; (index = value.indexOf(needle, from)) !== -1; from = index + needle.length)
+    matches.push([offsets[index], ends[index + needle.length - 1]]);
+  return matches;
+}
+
 export function numbers(value) {
   return (String(value ?? '').match(/[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?/g) ?? []).map(Number).filter(Number.isFinite);
 }
@@ -168,6 +187,8 @@ export class Diagram {
   render(data) {
     clearTimeout(this.pendingTextClick);
     this.clearLabels();
+    this.matches = [];
+    this.matchIndex = -1;
     this.data = data;
     this.svg.replaceChildren();
     this.svg.setAttribute('preserveAspectRatio', data.uml ? 'xMinYMin meet' : 'xMidYMid meet');
@@ -291,14 +312,57 @@ export class Diagram {
     this.update();
   }
   find(query) {
-    const needle = normalized(query).trim();
-    let count = 0;
-    for (const group of this.svg.querySelectorAll('.symbol')) {
-      const match = !!needle && group.dataset.text.includes(needle);
-      group.classList.toggle('match', match);
-      if (match) count++;
+    for (const rect of this.svg.querySelectorAll('.diagram-search-hit')) rect.remove();
+    this.matches = [];
+    this.matchIndex = -1;
+    if (!normalized(query).trim()) return 0;
+    for (const text of this.svg.querySelectorAll('text')) {
+      const count = text.getNumberOfChars();
+      let offset = 0;
+      const ranges = [];
+      for (const node of text.childNodes) {
+        if (node.nodeType !== Node.TEXT_NODE && node.nodeName.toLowerCase() !== 'tspan') continue;
+        const content = node.textContent;
+        for (const [start, end] of textMatches(content, query)) ranges.push([start + offset, end + offset]);
+        offset += content.length;
+      }
+      if (!ranges.length) continue;
+      const color = getComputedStyle(text).fill.match(/[\d.]+/g)?.slice(0, 3).map(Number);
+      const lightText = color?.length === 3 && (color[0] * .2126 + color[1] * .7152 + color[2] * .0722) > 160;
+      for (const [start, end] of ranges) {
+        if (end >= count) continue;
+        const first = text.getExtentOfChar(start), last = text.getExtentOfChar(end);
+        const x = Math.min(first.x, last.x), y = Math.min(first.y, last.y);
+        const right = Math.max(first.x + first.width, last.x + last.width);
+        const bottom = Math.max(first.y + first.height, last.y + last.height);
+        const rect = svgElement('rect', { x: x - 1, y: y - 1, width: right - x + 2, height: bottom - y + 2,
+          class: `diagram-search-hit${lightText ? ' light-text' : ''}`, 'aria-hidden': 'true' });
+        if (text.hasAttribute('transform')) rect.setAttribute('transform', text.getAttribute('transform'));
+        text.before(rect);
+        this.matches.push(rect);
+      }
     }
-    return count;
+    return this.matches.length;
+  }
+  nextMatch(direction) {
+    if (!this.matches?.length || !this.box) return null;
+    if (this.matchIndex >= 0) this.matches[this.matchIndex].classList.remove('current');
+    this.matchIndex = this.matchIndex < 0 ? (direction < 0 ? this.matches.length - 1 : 0)
+      : (this.matchIndex + direction + this.matches.length) % this.matches.length;
+    const match = this.matches[this.matchIndex];
+    match.classList.add('current');
+    const bounds = this.svg.getBoundingClientRect(), hit = match.getBoundingClientRect();
+    const divider = this.inspectorDivider?.getBoundingClientRect();
+    const bottom = this.container?.parentElement?.dataset.dock === 'bottom';
+    const width = !bottom && divider?.width ? Math.min(bounds.width, Math.max(0, divider.left - bounds.left)) : bounds.width;
+    const height = bottom && divider?.height ? Math.min(bounds.height, Math.max(0, divider.top - bounds.top)) : bounds.height;
+    const inverse = this.svg.getScreenCTM().inverse();
+    const target = new DOMPoint(bounds.left + width / 2, bounds.top + height / 2).matrixTransform(inverse);
+    const center = new DOMPoint(hit.left + hit.width / 2, hit.top + hit.height / 2).matrixTransform(inverse);
+    this.box[0] += center.x - target.x;
+    this.box[1] += center.y - target.y;
+    this.update();
+    return { index: this.matchIndex + 1, total: this.matches.length };
   }
 }
 

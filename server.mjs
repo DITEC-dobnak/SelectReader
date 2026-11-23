@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,7 +9,7 @@ import { Cache, identity, search, validateId, validateSelection } from './reader
 import { listDatastores } from './direct-broker.mjs';
 import { AuthenticationError, prepareAuthentication, verifyCredentials, publicAuthenticationError } from './native-auth.mjs';
 import { authenticateWindowsShare, WindowsShareError } from './windows-smb.mjs';
-import { listModels, ModelReadError } from './direct-models.mjs';
+import { listModels, ModelReadError, isTransientRead } from './direct-models.mjs';
 import { loadNativeCatalog, loadNativeDetail } from './native-content.mjs';
 import { ExportJob } from './model-export.mjs';
 import { chooseExportFolder, openExportFolder } from './export-folder.mjs';
@@ -28,8 +29,9 @@ export function currentWindowsIdentity({
 }
 
 export class Reader {
-  constructor(cache) {
+  constructor(cache, { retryDelay = 5000 } = {}) {
     this.cache = cache;
+    this.retryDelay = retryDelay;
     this.entries = new Map();
     this.details = new Map();
     this.selection = null;
@@ -64,6 +66,7 @@ export class Reader {
     if (!cached) throw Object.assign(new Error('Pre tento model zatiaľ neexistuje lokálna kópia.'), { status: 404 });
     const entries = new Map(cached.entries.map(entry => [entry.id, entry]));
     const details = new Map(cached.details);
+    this.cancelRetry();
     this.controller?.abort();
     this.generation++;
     this.selection = selection;
@@ -84,6 +87,7 @@ export class Reader {
     if (missingOnly && (!retry || this.offline || this.status.phase !== 'partial' ||
         ['server','repository','model','modelId'].some(key => selection[key] !== this.selection?.[key])))
       throw Object.assign(new Error('Pre tento model nie je dostupný zoznam chýbajúcich typov.'), { status: 409 });
+    this.cancelRetry();
     this.retryCatalog = null;
     this.controller?.abort();
     const controller = new AbortController(), generation = ++this.generation;
@@ -99,7 +103,7 @@ export class Reader {
     }
     if (generation !== this.generation) throw Object.assign(new Error('Výber modelu sa zmenil.'), { status: 409 });
     const indexed = retry?.indexed ?? new Map();
-    let ready = false, accept, decline;
+    let ready = false, persisting = false, accept, decline;
     const opened = new Promise((resolve, reject) => { accept = resolve; decline = reject; });
     const current = () => {
       if (generation !== this.generation || controller.signal.aborted) throw Object.assign(new Error('Výber modelu sa zmenil.'), { status: 409 });
@@ -158,22 +162,49 @@ export class Reader {
         this.usingCachedIndex = false;
       }
       this.updatedAt = new Date().toISOString();
+      persisting = true;
       await this.persist();
+      persisting = false;
       current();
       if (!result.complete && result.errors?.length && result.schemaClasses)
         this.retryCatalog = { indexed, schemaClasses: result.schemaClasses, classes: new Set(result.errors.map(error => error.className)) };
       this.status = result.complete ? { phase: 'ready', current: '', error: null } : {
         phase: 'partial', current: '', error: `Nedokončené typy po opakovaných pokusoch: ${(result.errors ?? []).map(error => `${error.className.replace(/^_Ent2_/, '')} (${error.code})`).join(', ')}.`,
       };
+      if (this.retryCatalog) this.scheduleRetry(catalogLoader, detailLoader, logger);
     }).catch(error => {
       const safe = error instanceof ModelReadError ? error :
         new ModelReadError('MODEL_READ', 'Priame čítanie modelu alebo uloženie jeho kópie zlyhalo. Načítaná časť nie je označená ako úplný model.');
       decline(safe);
       if (generation !== this.generation || controller.signal.aborted) return;
+      if (retry && !persisting && (isTransientRead(safe.code) || ['MODEL_CONNECTION','MODEL_TIMEOUTS','MODEL_TIME_LIMIT'].includes(safe.code))) {
+        this.retryCatalog = retry;
+        this.status = { phase: 'partial', current: '', error: `${safe.message} Automatické dočítanie sa zopakuje.` };
+        logger.error({ event: 'native-model-content', code: safe.code, ...(safe.serverCode ? { serverCode: safe.serverCode } : {}) });
+        this.scheduleRetry(catalogLoader, detailLoader, logger);
+        return;
+      }
       this.status = { phase: 'error', current: this.status.current, error: safe.message };
       logger.error({ event: 'native-model-content', code: safe.code, ...(safe.serverCode ? { serverCode: safe.serverCode } : {}) });
     });
     await opened;
+  }
+  cancelRetry() {
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+  }
+  scheduleRetry(catalogLoader, detailLoader, logger) {
+    this.cancelRetry();
+    const generation = this.generation;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      if (generation !== this.generation || !this.retryCatalog || this.offline) return;
+      this.openNative(this.selection, catalogLoader, detailLoader, logger, true).catch(error => {
+        if (generation === this.generation)
+          logger.error({ event: 'native-model-retry', code: error.code ?? 'MODEL_READ' });
+      });
+    }, this.retryDelay);
+    this.retryTimer.unref();
   }
   persist() {
     return this.cache.save({ version: 1, selection: this.selection, entries: [...this.entries.values()],
@@ -228,7 +259,7 @@ export function createServer(reader, cache, {
   nativeCatalog = loadNativeCatalog, nativeDetail = loadNativeDetail,
   markdownExport = new ExportJob(path.join(root, 'exports')),
   folderPicker = chooseExportFolder, folderOpener = openExportFolder,
-  onExit, idleMs = 15000,
+  onExit, idleMs = 15000, desktop = false, desktopIdleMs = 2000,
 } = {}) {
   const views = new Set();
   let idleTimer, ending = false;
@@ -237,13 +268,17 @@ export function createServer(reader, cache, {
     clearTimeout(idleTimer);
     onExit(command);
   };
-  const scheduleIdle = () => {
+  const scheduleIdle = (desktopClose = false, confirmedExport = false) => {
     clearTimeout(idleTimer);
     if (ending || views.size) return;
     idleTimer = setTimeout(() => {
-      if (markdownExport.state.active || pickingFolder) scheduleIdle();
+      if (markdownExport.state.active && confirmedExport) {
+        markdownExport.cancel();
+        confirmedExport = false;
+      }
+      if (markdownExport.state.active || pickingFolder) scheduleIdle(desktopClose, confirmedExport);
       else finish('stop');
-    }, idleMs);
+    }, desktopClose ? desktopIdleMs : idleMs);
     idleTimer.unref();
   };
   let checkingCredentials = false;
@@ -274,7 +309,7 @@ export function createServer(reader, cache, {
             views.add(view);
             clearTimeout(idleTimer);
           }
-          return json(response, 200, { ...reader.state(), markdownExport: markdownExport.state, lifecycle: !!onExit });
+          return json(response, 200, { ...reader.state(), markdownExport: markdownExport.state, lifecycle: !!onExit, desktop });
         }
         if (url.pathname === '/api/current-identity') {
           const identity = await identityProvider();
@@ -317,7 +352,10 @@ export function createServer(reader, cache, {
       const input = await body(request);
       if (onExit && url.pathname === '/api/reader/leave') {
         if (!origins.includes(request.headers.origin)) return json(response,403,{error:'Vyžaduje sa lokálne rozhranie.'});
-        if (views.delete(input?.view)) scheduleIdle();
+        if (views.delete(input?.view)) {
+          const desktopClose = desktop && input.desktopClose === true;
+          scheduleIdle(desktopClose, desktopClose && input.confirmedExport === true);
+        }
         return json(response,200,{accepted:true});
       }
       if (onExit && ['/api/reader/stop','/api/reader/restart'].includes(url.pathname)) {
@@ -332,6 +370,7 @@ export function createServer(reader, cache, {
         const selection = validateSelection(input);
         if (reader.selection && identity(reader.selection) === identity(selection)) {
           if (!input.closeActive) return json(response, 409, { error: 'Kópia patrí otvorenému modelu. Najprv potvrď jeho zatvorenie.' });
+          reader.cancelRetry();
           reader.controller?.abort();
           const generation = reader.generation + 1;
           Object.assign(reader, new Reader(cache), { generation });
@@ -460,9 +499,14 @@ export function createServer(reader, cache, {
 }
 
 async function main() {
+  const desktop = process.argv.includes('--desktop');
+  const edge = desktop && [process.env['ProgramFiles(x86)'], process.env.ProgramFiles, process.env.LOCALAPPDATA]
+    .filter(Boolean).map(base => path.join(base, 'Microsoft', 'Edge', 'Application', 'msedge.exe')).find(file => existsSync(file));
+  if (desktop && !edge) throw new Error('Samostatné okno vyžaduje nainštalovaný Microsoft Edge.');
   const cache = new Cache(path.join(root, '.cache'));
   const reader = new Reader(cache);
-  const server = createServer(reader, cache, {onExit(command) {
+  const server = createServer(reader, cache, {desktop: process.argv.includes('--desktop-mode'), onExit(command) {
+    reader.cancelRetry();
     reader.controller?.abort();
     server.close(async () => {
       await cache.writes;
@@ -476,7 +520,7 @@ async function main() {
         const health = await response.json();
         if (health.app === 'select-architect-reader' && health.version === 2) {
           console.log('Prehliadač už beží: http://127.0.0.1:4317');
-          if (process.argv.includes('--open')) openBrowser();
+          openWindow();
           return;
         }
       } catch (probeError) { console.error(probeError.message); }
@@ -487,15 +531,25 @@ async function main() {
   server.listen(4317, '127.0.0.1', () => {
     console.log('Select Reader: http://127.0.0.1:4317 · iba priamy TCP prístup');
     console.log('Priame čítanie modelov, vlastností, súvislostí a geometrie diagramov; Windows pripojenie bez hesla v aplikácii.');
-    if (process.argv.includes('--open')) openBrowser();
+    openWindow();
   });
   process.once('SIGINT', () => server.close());
   process.once('SIGTERM', () => server.close());
-}
-
-function openBrowser() {
-  const child = spawn('explorer.exe', ['http://127.0.0.1:4317'], { windowsHide: true, stdio: 'ignore' });
-  child.on('error', error => console.error(`Otvorte adresu ručne: ${error.message}`));
+  function openWindow() {
+    if (!desktop && !process.argv.includes('--open')) return;
+    const url = 'http://127.0.0.1:4317';
+    const args = desktop ? [`--app=${url}`, '--no-first-run', '--no-default-browser-check',
+      `--user-data-dir=${path.join(process.env.LOCALAPPDATA, 'SelectReader', 'Edge')}`] : [url];
+    const child = spawn(edge || 'explorer.exe', args, { stdio: 'ignore', windowsHide: !desktop });
+    child.on('error', error => {
+      console.error(`Okno sa nepodarilo otvoriť: ${error.message}`);
+      if (desktop) {
+        process.exitCode = 1;
+        if (server.listening) server.close();
+      }
+    });
+    child.unref();
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
