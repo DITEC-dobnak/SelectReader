@@ -136,12 +136,16 @@ function setupInspector(stage, number) {
     closeInspector(stage);
   });
   inspectors.set(stage,{aside:elements['class-inspector'],panel:elements['inspector-fields'],name:elements['inspector-name'],sequence:0,element:null,visibilityKey});
+  stage.querySelector('.inspector-back').addEventListener('click',()=>{
+    const previous=inspectors.get(stage).element?.previous;
+    if(previous)inspectDiagramElement(previous.id,previous.link,stage,null,true,previous);
+  });
 }
 setupInspector(mainStage,1);
 const diagram = new Diagram($('diagram'), $('diagram-notice'), (id, link) => {
   if (['sequence', 'class'].includes(diagram.data?.uml?.kind))
     return inspectDiagramElement(link === 'callers' ? selectedId : id, link);
-  return openDetail(id);
+  return openLinkedDetail(id);
 });
 let dragEntry = null;
 let dropTarget = null;
@@ -673,9 +677,15 @@ async function relatedClassDiagrams(relations,current) {
 }
 
 $('diagram-back').addEventListener('click', () => {
-  const entry = diagramTrail.pop();
-  if (entry) openDetail(entry.id, entry, true);
+  const previous = diagramTrail.pop();
+  if (previous) openDetail(previous.entry.id, previous.entry, true, false, previous.relationsOpen);
 });
+
+function openLinkedDetail(id,entry=null) {
+  if(selectedEntry && selectedId!==id)
+    diagramTrail.push({entry:selectedEntry,relationsOpen:$('object-relations').open});
+  return openDetail(id,entry,true);
+}
 
 $('refresh-diagram').addEventListener('click', () => openDetail(selectedId, selectedEntry, true, true));
 
@@ -737,7 +747,7 @@ function closeDiagramTab(id) {
   ($('catalog').classList.contains('collapsed') ? $('catalog-toggle') : $('search')).focus();
 }
 
-async function openDetail(id, entry = null, linked = false, refresh = false) {
+async function openDetail(id, entry = null, linked = false, refresh = false, relationsOpen = false) {
   const old = diagramTabs.get(selectedId);
   if (old && selectedId === id && !refresh && old.loaded) return;
   inspectors.get(mainStage).diagramResult = null;
@@ -774,7 +784,7 @@ async function openDetail(id, entry = null, linked = false, refresh = false) {
   $('detail-source').textContent = '';
   $('relations-count').textContent = '';
   $('diagram-panel').hidden = $('attributes-panel').hidden = $('object-relations').hidden = true;
-  $('object-relations').open = false;
+  $('object-relations').open = relationsOpen;
   updateFavorite();
   renderResults();
   try {
@@ -894,7 +904,7 @@ function restoreDiagramInspector(tab, result, stage) {
   const target = tab.inspector === undefined
     ? {id:entry.id, link:entry.type === 'Object Sequence Diagram' ? 'callers' : 'diagram'}
     : tab.inspector;
-  if (target) inspectDiagramElement(target.id, target.link, stage, target.id === entry.id ? result : null, false);
+  if (target) inspectDiagramElement(target.id, target.link, stage, target.id === entry.id ? result : null, false,target);
 }
 
 async function loadLinks(detail, isProbe, current) {
@@ -924,10 +934,11 @@ function diagramLinks(result) {
   return sqdLinks.get(result);
 }
 
-async function inspectDiagramElement(id, link, stage=mainStage, loaded=null, rememberOpen=true) {
+async function inspectDiagramElement(id, link, stage=mainStage, loaded=null, rememberOpen=true, location={id,link}) {
   const inspector = inspectors.get(stage);
   if (rememberOpen) localStorage.setItem(inspector.visibilityKey,'open');
-  inspector.element = {id,link};
+  inspector.element = location;
+  stage.querySelector('.inspector-back').hidden = !location.previous;
   const sequence = ++inspector.sequence;
   const current = () => sequence === inspector.sequence;
   const panel = inspector.panel;
@@ -951,8 +962,7 @@ async function inspectDiagramElement(id, link, stage=mainStage, loaded=null, rem
       link.append(arrow, target.name);
       link.addEventListener('click', event => {
         event.preventDefault();
-        diagramTrail.push(selectedEntry);
-        openDetail(target.id, target, true);
+        openLinkedDetail(target.id,target);
       });
       return link;
     };
@@ -977,11 +987,18 @@ async function inspectDiagramElement(id, link, stage=mainStage, loaded=null, rem
     relations.append(label);
     relations.addEventListener('toggle', () => {
       if (relations.open && relations.childElementCount === 1 && !relations.dataset.rendered) {
-        renderRelations(detail.relations, relations, related => inspectDiagramElement(related.id,undefined,stage));
+        renderRelations(detail.relations, relations, related => {
+          if(related.id===id)return;
+          location.relationsOpen=relations.open;
+          location.propertiesOpen=properties.querySelector('details').open;
+          inspectDiagramElement(related.id,undefined,stage,null,true,{id:related.id,previous:location});
+        });
         relations.dataset.rendered = 'true';
       }
     });
     panel.append(relations);
+    if(location.relationsOpen)relations.open=true;
+    if(location.propertiesOpen)properties.querySelector('details').open=true;
     if (classLinks) {
       try {
         const targets = await relatedClassDiagrams(detail.relations,current);
@@ -1081,7 +1098,7 @@ function renderAttributes(attributes, panel = $('attributes-panel')) {
   if (!entries.length) panel.append('Objekt nemá vyplnené textové vlastnosti.');
 }
 
-function renderRelations(relations, panel = $('relations-panel'), inspect = entry => openDetail(entry.id, entry)) {
+function renderRelations(relations, panel = $('relations-panel'), inspect = entry => openLinkedDetail(entry.id, entry)) {
   if (panel === $('relations-panel')) $('relations-count').textContent = `(${relations.length})`;
   const groups = new Map();
   for (const relation of relations) {

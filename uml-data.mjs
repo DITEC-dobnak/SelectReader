@@ -14,11 +14,27 @@ function classSymbol(symbol) {
   return symbol.nativeClass === '_Ent2_CDClass' || symbol.fields.Type === 'CD::Class';
 }
 
-export async function classDiagramData(symbols, read, orderedItems, classCache) {
+async function packagePath(item, orderedItems) {
+  const names = [], seen = new Set();
+  while (item) {
+    if (seen.has(item.id)) throw new Error('Cycle in package hierarchy.');
+    seen.add(item.id);
+    names.unshift(item.name);
+    [item] = await orderedItems(item, '_Ent2_ScopedPackage_To_Container', '_Ent2_Package');
+  }
+  return names.join('::');
+}
+
+export async function classDiagramData(symbols, read, orderedItems, classCache, exportMode = false) {
   const classes = [], edges = [], notes = [];
   for (const symbol of symbols) {
     if (classSymbol(symbol) && symbol.target) {
       const presentation = { id: symbol.id, target: symbol.target, name: symbol.target.name, signature: symbol.fields.ViewShowSignature !== 'false' };
+      const frame = symbol.relations?.find(r => r.role === '_Ent2_CDClass_To_CDPackage');
+      if (exportMode && frame) {
+        const pkg = symbols.find(s => s.id === frame.item.id)?.target;
+        if (pkg) presentation.home = await packagePath(pkg, orderedItems);
+      }
       const cached = classCache?.get(symbol.target.id);
       if (cached) {
         classes.push({ ...cached, ...presentation });
@@ -43,16 +59,19 @@ export async function classDiagramData(symbols, read, orderedItems, classCache) 
           throw new Error('Operation parameter order is incomplete.');
         for (const parameter of parametersInOrder) {
           const value = await read(parameter);
-          parameters.push(`${parameter.name}${dataType(value) ? `: ${dataType(value)}` : ''}`);
+          const direction = exportMode && ({0:'in',1:'out',2:'inout'})[value.attributes.Mechanism];
+          parameters.push(`${direction ? `${direction} ` : ''}${parameter.name}${dataType(value) ? `: ${dataType(value)}` : ''}`);
         }
         operations.push({ id: item.id, target: item, name: item.name, parameters, type: dataType(member),
           description: member.attributes.Description,
           isStatic: member.attributes.IsStatic === 'true', isAbstract: member.attributes.IsAbstract === 'true' });
       }
+      const pkg = relationItems(data, '_Ent2_Class_To_Namespace')[0];
       const definition = { attributes, operations,
-        stereotype: classStereotype(data.attributes.Stereotype),
+        stereotype: exportMode && data.attributes.Stereotype === '0' ? 'business' : classStereotype(data.attributes.Stereotype),
+        custom: relationItems(data, '_Ent2_UserStereotypedItem_To_UserStereotype').map(item => item.name),
         description: data.attributes.Description,
-        namespace: relationItems(data, '_Ent2_Class_To_Namespace')[0]?.name ?? '',
+        namespace: exportMode && pkg?.nativeClass === '_Ent2_Package' ? await packagePath(pkg, orderedItems) : pkg?.name ?? '',
         isAbstract: data.attributes.IsAbstract === 'true' };
       if (classCache) {
         if (classCache.size >= 512) classCache.delete(classCache.keys().next().value);

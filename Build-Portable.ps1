@@ -19,7 +19,7 @@ try {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot "web\$asset") -Destination $web.FullName
     }
     $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-    & $compiler /nologo /target:winexe /platform:x64 /codepage:65001 /reference:System.Windows.Forms.dll /reference:System.Drawing.dll "/out:$app\SelectReader.exe" "$PSScriptRoot\ReaderTray.cs"
+    & $compiler /nologo /target:winexe /platform:x64 /codepage:65001 /reference:System.Windows.Forms.dll /reference:System.Drawing.dll "/win32icon:$PSScriptRoot\SelectReader.ico" "/out:$app\SelectReader.exe" "$PSScriptRoot\ReaderTray.cs"
     if ($LASTEXITCODE -ne 0) { throw 'Launcher compilation failed.' }
     Compress-Archive -LiteralPath $app -DestinationPath "$stage\SelectReader-win-x64.zip"
     New-Item -ItemType Directory -Path $dist -Force | Out-Null

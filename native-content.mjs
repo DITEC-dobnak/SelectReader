@@ -285,7 +285,10 @@ export async function loadNativeCatalog(selection, {
 }
 
 export async function loadNativeDetail(selection, entry, context, options = {}) {
-  return withNativeDetails(selection, context, read => read(entry), options);
+  return withNativeDetails(selection, context, read => read(entry), {
+    ...(entry.nativeClass.endsWith('Diagram') ? { timeoutMs: 60000 } : {}),
+    ...options,
+  });
 }
 
 export async function withNativeDetails(selection, context, action, { exportMode = false, classCache, ...options } = {}) {
@@ -335,7 +338,8 @@ export async function withNativeDetails(selection, context, action, { exportMode
       return result;
     };
     const semanticRoles = {
-      _Ent2_Class: ['_Ent2_Class_To_Attribute', '_Ent2_Class_To_Operation', '_Ent2_Class_To_Namespace'],
+      _Ent2_Class: ['_Ent2_Class_To_Attribute', '_Ent2_Class_To_Operation', '_Ent2_Class_To_Namespace',
+        ...(exportMode ? ['_Ent2_UserStereotypedItem_To_UserStereotype'] : [])],
       _Ent2_Attribute: ['_Ent2_TypedAttribute_To_DataType'],
       _Ent2_Operation: ['_Ent2_Operation_To_Parameter', '_Ent2_TypedOperation_To_ReturnType'],
       _Ent2_Parameter: ['_Ent2_TypedParameter_To_DataType'],
@@ -379,7 +383,7 @@ export async function withNativeDetails(selection, context, action, { exportMode
     return action(async entry => {
     const start = performance.now();
     if (exportMode && entry.nativeClass === '_Ent2_Class') {
-      const result = await classDiagramData([{ id: entry.id, target: entry, nativeClass: '_Ent2_CDClass', fields: {} }], readSemantic, orderedItems, classCache);
+      const result = await classDiagramData([{ id: entry.id, target: entry, nativeClass: '_Ent2_CDClass', fields: {} }], readSemantic, orderedItems, classCache, exportMode);
       return { exportClass: result.classes[0] };
     }
     if (exportMode && entry.nativeClass === '_Ent2_Operation')
@@ -402,7 +406,7 @@ export async function withNativeDetails(selection, context, action, { exportMode
         detail.warnings.push(...data.warnings.map(warning => `${symbol.name}: ${warning}`));
       }
       let uml;
-      if (entry.nativeClass === '_Ent2_ClassDiagram') uml = await classDiagramData(symbols, readSemantic, orderedItems, classCache);
+      if (entry.nativeClass === '_Ent2_ClassDiagram') uml = await classDiagramData(symbols, readSemantic, orderedItems, classCache, exportMode);
       if (entry.nativeClass === '_Ent2_ObjectSequenceDiagram') {
         try {
           uml = await sequenceDiagramData(symbols, (owner, children, role = '_Ent2_ParentStep_To_ChildStep') =>

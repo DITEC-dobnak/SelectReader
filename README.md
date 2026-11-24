@@ -60,6 +60,8 @@ Nie je potrebné `npm install`.
 **Úplnosť indexu je výslovná.** Počas načítania sa prehľadáva už načítaná
 časť názvov a otvorených detailov. Úplný katalóg sa označí až po dokončení.
 Pri prvom čítaní typu Reader čaká na jednotlivú odpoveď najviac 15 sekúnd.
+Pri načítaní detailu diagramu čaká na odpoveď najviac 60 sekúnd; tento limit
+platí pre nečinnosť spojenia, nie pre celkové trvanie načítania diagramu.
 Pri výpadku spojenia typ odloží na koniec a pokračuje ďalším typom.
 Po prvom priechode skúsi iba odložené typy, každý ešte najviac dvakrát,
 na novom spojení s limitom 60 sekúnd na odpoveď. Ďalší neúspešný pokus
@@ -89,7 +91,7 @@ Diagnostické knižnice nie sú súčasťou aplikácie.
 ## Spustenie
 
 **Prenosná aplikácia pre Windows x64:** Rozbaľ celý `SelectReader-win-x64.zip`
-do zapisovateľného priečinka a dvojklikni na `SelectReader.exe`. Node.js je
+do zapisovateľného priečinka a dvojklikni na `SelectReader.exe` (modrá ikona s bielym **S**). Node.js je
 pribalený; netreba ho inštalovať ani nastavovať `PATH`. Okno bez kariet
 a adresného riadka používa nainštalovaný Microsoft Edge. Dáta modelov sa
 ukladajú do `.cache` pri aplikácii, profil okna do `%LOCALAPPDATA%\SelectReader\Edge`.
@@ -160,7 +162,7 @@ odkazujú na cieľ cez `probe`; otvoríš ju aj kliknutím na názov otvoreného
 Klik
 na text alebo šípku správy otvorí v pravej lište jej celý opis zo slovníka
 bez odchodu zo sekvenčného diagramu. Klik
-na hlavičku triedy zobrazí vlastnosti a podľa jej symbolov automaticky vyhľadá súvisiace triedne diagramy. Každý sa zobrazí ako **↗ názov CLD** a otvorí sa až kliknutím na odkaz. Dvojklik na text v SQD aj CLD označí slovo bez presmerovania. **Späť na diagram** sa vráti k zdrojovému diagramu.
+na hlavičku triedy zobrazí vlastnosti a podľa jej symbolov automaticky vyhľadá súvisiace triedne diagramy. Každý sa zobrazí ako **↗ názov CLD** a otvorí sa až kliknutím na odkaz. Dvojklik na text v SQD aj CLD označí slovo bez presmerovania. Po otvorení prepojenej položky tlačidlo **← Späť** v hlavičke detailu vráti predchádzajúcu položku. Pri prechádzaní kariet v bočnom alebo spodnom paneli použi **← Späť** priamo v tomto paneli; rozbalené vlastnosti a prepojenia zostanú pri návrate otvorené.
 Na SQD aj CLD koliesko posúva zvisle, Shift+koliesko vodorovne a Ctrl+koliesko
 mení mierku jemne (najviac faktorom 1,08 na udalosť, pri malých pohyboch touchpadu menej). Všetky typy diagramov majú kompaktnú hlavičku už počas načítania. Touchpad podporuje posun v oboch osiach. Na oboch diagramoch
 je stereotyp `«user»` zelený a `«interface»` modrý s bielym písmom.
@@ -412,6 +414,11 @@ len jeden export. Zatvorenie dialógu ho nezastaví.
 Hotový export sa uloží priamo do zvoleného cieľa ako `<model>_<repozitár>_<RRRR-MM-DD>` bez nadradeného `export-…`.
 Ak názov už existuje, použije sa prvý voľný s príponou `_2`, `_3` atď. Existujúce exporty zostanú nezmenené. Pri pokračovaní zostáva dátum pôvodného behu. V priečinku je koreňový
 `index.md`, indexmi typov, stránkami diagramov, `Events.md` a `Other classes.md`.
+Triedne diagramy majú rovnako ako v COM exporte najprv prehľad `Elements`,
+potom podrobnosti `Classes` a nakoniec Mermaid `Diagram`. Triedy z iného balíka
+majú kvalifikovaný názov. Diagram zobrazuje aj stereotypy, voliteľnosť a predvolené
+hodnoty atribútov. Kotvy operácií sú odvodené z názvov; pri kolízii dostane
+ďalšia operácia príponu `-2`, `-3` atď., aby odkaz zo SQD viedol na správny riadok.
 Súbory sú UTF-8 bez BOM s LF a relatívnymi odkazmi. Ide o samostatnú
 implementáciu formátu: napríklad ID kotiev, výber pri duplicitných názvoch,
 Mermaid rozloženie a zápis vnorených krokov nemusia byť identické s COM exportom.

@@ -103,6 +103,31 @@ test('page names protect indexes and handle case, reserved names, separators and
   assert.ok(!names.includes('class diagrams/index.md'));
 });
 
+test('class page restores COM sections and sequence links target the exact overloaded operation',async t=>{
+  const base=await mkdtemp(path.join(tmpdir(),'reader-class-export-'));
+  t.after(()=>rm(base,{recursive:true}));
+  const pages=[{name:'Types',id:'cd',type:'Class Diagram'},{name:'Calls',id:'sq',type:'Object Sequence Diagram'}];
+  const ops=['one','two'].map(id=>({id,name:'Čítaj',parameters:['in code']}));
+  const c={id:'foreign',name:'Číslo',namespace:'Common',home:'Local',target:{id:'c'},
+    stereotype:'business',custom:['enumerator'],attributes:[{name:'Code',type:'Int',optional:true,defaultValue:'0',description:'Code.\r\n'}],operations:ops};
+  const sub={...c,id:'local',name:'Item',namespace:'Local',target:{id:'s'},operations:[]};
+  const symbols=[{id:'p',fields:{Type:'CD::Package'},target:{name:'Local'}},{id:'g',fields:{Type:'CD::Generalization'}}];
+  const uml={kind:'class',classes:[c,sub],edges:[{id:'g',type:'generalization',symbolIds:['local','foreign']}]};
+  const seq={kind:'sequence',participants:[],rows:[{kind:'message',target:{id:'two',name:'Čítaj'}}]};
+  const result=await exportModel(selection,base,{catalog:async()=>({complete:true,modelId:'m',entries:pages}),
+    session:async(_s,_ctx,fn)=>fn(async p=>({attributes:{},relations:[],diagram:p.id==='cd'?{symbols,uml}:{symbols:[],uml:seq}}))});
+  const page=await readFile(path.join(result.path,'Class Diagrams','Types.md'),'utf8');
+  assert.deepEqual([...page.matchAll(/^## (.+)$/gm)].map(m=>m[1]),['Elements','Classes','Diagram','Referenced by']);
+  assert.match(page,/### Packages\n\n- Local\n\n### Generalizations\n\n- Item ▷ Common\.Číslo/);
+  assert.match(page,/### Common\.Číslo\n\n- Stereotypes: «business» «enumerator»/);
+  assert.match(page,/\| Code\. \|/);
+  assert.match(page,/class n1\["Common\.Číslo"\] \{\n +<<business, enumerator>>\n +Code : Int = 0 #123;optional#125;/);
+  assert.match(page,/n1 <\|-- n2/);
+  assert.match(page,/id="op-common-cislo-citaj-2".*Čítaj\( in code \).*\[Calls\]/);
+  const calls=await readFile(path.join(result.path,'Object Sequence Diagrams','Calls.md'),'utf8');
+  assert.match(calls,/Types\.md#op-common-cislo-citaj-2>/);
+});
+
 test('default export reads with up to twenty concurrent sessions',async t=>{
   const base=await mkdtemp(path.join(tmpdir(),'reader-export-workers-'));
   t.after(()=>rm(base,{recursive:true}));

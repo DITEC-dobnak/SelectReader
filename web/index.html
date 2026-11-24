@@ -71,6 +71,7 @@
       <article id="detail" hidden>
         <header class="detail-header">
           <div class="detail-path" id="detail-path"></div>
+          <button id="diagram-back" hidden>← Späť</button>
           <div class="detail-heading"><div><span id="detail-type" class="type-badge"></span><h1 id="detail-name"></h1><button id="refresh-diagram" type="button" title="Znova načítať tento diagram zo servera" hidden>↻ Obnoviť</button></div><button id="favorite" title="Pridať medzi obľúbené" aria-pressed="false">☆</button></div>
           <div id="detail-source" class="muted"></div>
         </header>
@@ -80,7 +81,6 @@
         <section id="attributes-panel" class="detail-panel" aria-label="Vlastnosti"></section>
         <section id="diagram-panel" class="diagram-panel" aria-label="Diagram" hidden>
           <div class="diagram-toolbar">
-            <button id="diagram-back" hidden>← Späť na diagram</button>
             <label><input id="diagram-search" type="search" placeholder="Nájsť text v diagrame" aria-label="Nájsť text v diagrame"></label>
             <span id="diagram-matches" class="muted" aria-live="polite"></span>
             <button type="button" data-search-direction="-1" aria-label="Predchádzajúca zhoda" title="Predchádzajúca zhoda (Shift+Enter)" disabled>↑</button>
@@ -99,7 +99,7 @@
                 <button type="button" data-position="bottom" title="Panel dole" aria-label="Panel dole" aria-pressed="false"><svg aria-hidden="true" viewBox="0 0 20 20"><rect x="2" y="3" width="16" height="14" rx="2"/><path d="M3 11h14v5H3z"/></svg></button>
                 <button type="button" data-position="right" title="Panel vpravo" aria-label="Panel vpravo" aria-pressed="true"><svg aria-hidden="true" viewBox="0 0 20 20"><rect x="2" y="3" width="16" height="14" rx="2"/><path d="M11 4h6v12h-6z"/></svg></button>
               </span>
-              <strong id="inspector-name"></strong>
+              <div class="inspector-title"><button type="button" class="inspector-back" hidden>← Späť</button> <strong id="inspector-name"></strong></div>
               <div id="inspector-fields" aria-live="polite"></div>
             </aside>
           </div>

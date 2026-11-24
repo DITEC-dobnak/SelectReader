@@ -243,12 +243,12 @@ body, button, summary { user-select: text; }
 .dock-inspector rect { fill: none; stroke: currentColor; stroke-width: 1.5; }
 .diagram-stage[data-dock=bottom] { --bottom-size: clamp(min(100px,45%),var(--inspector-height,35%),65%); }
 .diagram-stage[data-dock=bottom] .class-inspector { inset: auto 0 0; width: auto; height: var(--bottom-size); border-left: none; border-top: 1px solid var(--border); display: grid; grid-template: "name dock close" auto "fields fields fields" minmax(0,1fr) / minmax(0,1fr) auto auto; row-gap: 6px; overflow: hidden; }
-.diagram-stage[data-dock=bottom] .inspector-name { grid-area: name; align-self: center; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.diagram-stage[data-dock=bottom] .inspector-title { grid-area: name; align-self: center; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .diagram-stage[data-dock=bottom] .dock-inspector { grid-area: dock; }
 .diagram-stage[data-dock=bottom] .close-inspector { grid-area: close; }
 .diagram-stage[data-dock=bottom] .inspector-fields { grid-area: fields; overflow: auto; }
 .diagram-stage[data-dock=bottom] .inspector-divider { inset: auto 0 var(--bottom-size); width: auto; height: 6px; cursor: row-resize; }
-.inspector-name { display: block; margin: 4px 26px 12px 0; }
+.inspector-title { display: block; margin: 4px 26px 12px 0; }
 #detail-name[role=button] { cursor: pointer; }
 .inspector-fields section button { display: block; margin-block: 4px; text-align: left; }
 .inspector-fields button.property-star { display: inline-block; margin: 0 0 0 .4em; padding: 1px 5px; background: transparent; border: 0; color: var(--accent); font-size: 15px; }

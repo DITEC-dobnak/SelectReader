@@ -26,9 +26,33 @@ export function planPages(entries, root) {
 }
 const escape = s => String(s ?? '').replaceAll('&', '&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
 const md = s => escape(s).replace(/([\\[\]*_`])/g,'\\$1');
-const cell = s => escape(s).replaceAll('|','\\|').replace(/\r\n?|\n/g,'<br>');
+const cell = s => escape(s).trim().replaceAll('|','\\|').replace(/\r\n?|\n/g,'<br>');
 const mm = s => String(s ?? '').replace(/[\r\n]/g,' ').replace(/[^ \p{L}\p{N}.,:_-]/gu, c=>`#${c.codePointAt(0)};`);
-const signature = o => `${o.name}(${o.parameters.join(', ')})${o.type ? ` : ${o.type}` : ''}`;
+const signature = o => `${o.name}(${o.parameters.length ? ` ${o.parameters.join(', ')} ` : ''})${o.type ? ` : ${o.type}` : ''}`;
+const stereotypes = c => [c.stereotype,...(c.custom ?? [])].filter(Boolean);
+const member = s => s.replace(/\r\n?|\n/g,' ').trim().replace(/[#{}()[\]~$*"%<>;]/g,ch=>`#${ch.charCodeAt(0)};`);
+export function displayedClasses(classes) {
+  const counts=new Map(), distinct=new Map();
+  for(const c of classes) {
+    counts.set(c.namespace,(counts.get(c.namespace)??0)+1);
+    if(!distinct.has(c.target.id))distinct.set(c.target.id,c);
+  }
+  const home=[...counts].sort((a,b)=>b[1]-a[1])[0]?.[0];
+  return [...distinct.values()].map(c=>({...c,display:c.namespace && c.namespace!==(c.home||home) ?
+    `${c.namespace.replaceAll('::','.')}.${c.name}` : c.name}));
+}
+export function operationAnchors(classes) {
+  const part=(s,max)=>s.normalize('NFD').replace(/\p{Mn}/gu,'').toLowerCase().replace(/[^a-z0-9]+/g,'-')
+    .replace(/^-|-$/g,'').slice(0,max).replace(/-$/,'')||'x';
+  const anchors=new Map(),used=new Set();
+  for(const c of classes)for(const o of c.operations){
+    const base=`op-${part(c.display??c.name,45)}-${part(o.name,50)}`;
+    let id=base;
+    for(let i=2;used.has(id);i++)id=`${base}-${i}`;
+    used.add(id);anchors.set(o.id,id);
+  }
+  return anchors;
+}
 function numberedRows(rows,symbols) {
   const steps=new Map(symbols.map(s=>[s.id,String(s.fields.StepType)]));
   const levels=[{prefix:'',counter:0,depth:0}],placed=new Map();
@@ -65,9 +89,10 @@ export function indexes(selection, pages, eventCount, otherCount) {
   return result;
 }
 
-export function classSection(lines,c,from,usage,lookup) {
-  lines.push('', `### ${md(c.name)}`, '');
-  if(c.stereotype) lines.push(`- Stereotypes: «${md(c.stereotype)}»`);
+export function classSection(lines,c,from,usage,lookup,anchors) {
+  lines.push('', `### ${md(c.display??c.name)}`, '');
+  const tags=stereotypes(c);
+  if(tags.length) lines.push(`- Stereotypes: ${tags.map(t=>`«${md(t)}»`).join(' ')}`);
   if(c.namespace) lines.push(`- Package: ${md(c.namespace)}`);
   if(c.description) lines.push(`- Description: ${cell(c.description)}`);
   lines.push('');
@@ -77,7 +102,7 @@ export function classSection(lines,c,from,usage,lookup) {
   } else lines.push('No attributes.');
   if(c.operations.length) {
     lines.push('','| Operation | Description | Used in |','|---|---|---|');
-    for(const o of c.operations) lines.push(`| <a id="${anchor('op',o.id)}" class="code-line" data-line="${lines.length}"></a>${cell(signature(o))} | ${cell(o.description)} | ${usedIn(from,usage.get(o.id),lookup)} |`);
+    for(const o of c.operations) lines.push(`| <a id="${anchors.get(o.id)}" class="code-line" data-line="${lines.length}"></a>${cell(signature(o))} | ${cell(o.description)} | ${usedIn(from,usage.get(o.id),lookup)} |`);
   }
 }
 function usedIn(from,ids,lookup) { return [...(ids ?? [])].map(id=>lookup.get(id)).map(p=>link(from,p.file,p.name)).join(', '); }
@@ -85,7 +110,8 @@ export function auxiliary(selection,events,others,usage,lookup) {
   const ev=['# Events','',...meta(selection),`- Events: ${events.size} (raised by event messages in sequence diagrams)`,'',link('Events.md','index.md','All diagram types'),'','| Event | Description | Used in |','|---|---|---|'];
   for(const [id,e] of events) ev.push(`| <a id="${anchor('event',id)}" class="code-line" data-line="${ev.length}"></a>${cell(e.name)} | ${cell(e.description)} | ${usedIn('Events.md',usage.get(id),lookup)} |`);
   const oc=['# Other classes','',...meta(selection),`- Classes: ${others.size} (their operations are called in sequence diagrams, but they appear on no class diagram)`,'',link('Other classes.md','index.md','All diagram types')];
-  for(const c of others.values()) classSection(oc,c,'Other classes.md',usage,lookup);
+  const anchors=operationAnchors(others.values());
+  for(const c of others.values()) classSection(oc,c,'Other classes.md',usage,lookup,anchors);
   return new Map([['Events.md',ev],['Other classes.md',oc]]);
 }
 export function renderPage(p,d,ctx) {
@@ -112,24 +138,45 @@ export function renderPage(p,d,ctx) {
   for(const key of ['Description','Notes','Documentation','PreConditions','PostConditions']) if(d.attributes[key]?.trim())
     lines.push('',`## ${key.replace('Conditions',' Conditions')}`,'',mention(d.attributes[key]));
   if(u?.kind==='class') {
-    const classes=[...new Map(u.classes.map(c=>[c.target.id,c])).values()];
-    const code=['classDiagram'],node=id=>`c${id}`;
-    for(const c of classes) {
-      code.push(`  class ${node(c.target.id)}["${mm(c.name)}"] {`);
-      if(c.stereotype) code.push(`    <<${mm(c.stereotype)}>>`);
-      for(const a of c.attributes) code.push(`    ${mm(a.name)} : ${mm(a.type)}`);
-      code.push('  }');
+    const classes=displayedClasses(u.classes), anchors=operationAnchors(classes);
+    const nodes=new Map(classes.map((c,i)=>[c.target.id,{...c,node:`n${i+1}`}]));
+    const sections=new Map(),code=['classDiagram'];
+    const add=(group,text)=>{
+      if(!sections.has(group))sections.set(group,new Set());
+      sections.get(group).add(text);
+    };
+    for(const c of nodes.values()) {
+      add('Classes',md(c.display));
+      const tags=stereotypes(c),body=[];
+      if(tags.length)body.push(`<<${member(tags.join(', '))}>>`);
+      for(const a of c.attributes) {
+        const value=a.defaultValue||a.initial;
+        body.push(member(`${a.name}${a.type?` : ${a.type}`:''}${value?` = ${value}`:''}${a.optional?' {optional}':''}`));
+      }
+      code.push(`    class ${c.node}["${mm(c.display)}"]${body.length?' {':''}`);
+      if(body.length)code.push(...body.map(s=>`        ${s}`),'    }');
     }
     const symbolClasses=new Map(u.classes.map(c=>[c.id,c.target.id]));
-    for(const e of u.edges) {
+    const edges=new Map(u.edges.map(e=>[e.id,e]));
+    for(const s of symbols) {
+      if(s.fields.Type==='CD::Package' && s.target)add('Packages',md(s.target.name));
+      const e=edges.get(s.id);
+      if(!e)continue;
       const ends=e.ends?.map(r=>r.classId)??e.symbolIds.map(id=>symbolClasses.get(id));
-      if(ends.length!==2||ends.some(id=>!classes.some(c=>c.target.id===id))) continue;
-      const [a,b]=ends.map(node);
-      code.push(e.ends ? `  ${a} "${mm(e.ends[0].multiplicity)}" -- "${mm(e.ends[1].multiplicity)}" ${b}${e.label?` : ${mm(e.label)}`:''}` :
-        `  ${a} ${e.type==='generalization'?'--|>':'..>'} ${b}`);
+      const group={generalization:'Generalizations',dependency:'Dependencies',association:'Associations'}[e.type];
+      if(ends.length!==2||ends.some(id=>!nodes.has(id))) {add(group,`${md(e.label||s.fields.Type)} (ends not available)`);continue;}
+      const [a,b]=ends.map(id=>nodes.get(id));
+      const arrow={generalization:'▷',dependency:'⇢',association:'—'}[e.type];
+      add(group,`${md(a.display)} ${arrow} ${md(b.display)}${e.label?`: ${md(e.label)}`:''}`);
+      code.push(e.ends ? `    ${a.node} "${mm(e.ends[0].multiplicity)}" -- "${mm(e.ends[1].multiplicity)}" ${b.node}${e.label?` : ${mm(e.label)}`:''}` :
+        e.type==='generalization'?`    ${b.node} <|-- ${a.node}`:`    ${a.node} ..> ${b.node}`);
     }
-    lines.push('','## Diagram','','```mermaid',...code,'```','','## Classes');
-    for(const c of classes) classSection(lines,c,p.file,usage,lookup);
+    if(sections.size)lines.push('','## Elements');
+    for(const [group,items] of sections)lines.push('',`### ${group}`,'',...[...items].map(item=>`- ${item}`));
+    if(classes.length)lines.push('','## Classes');
+    for(const c of classes) classSection(lines,c,p.file,usage,lookup,anchors);
+    if(u.notes?.length)lines.push('','## Notes','',...u.notes.filter(n=>n.text?.trim()).map(n=>`- ${mention(n.text.trim())}`));
+    if(classes.length)lines.push('','## Diagram','','```mermaid',...code,'```');
   } else if(u?.kind==='sequence') {
     lines.push('','## Specification','');
     const code=['sequenceDiagram'];
@@ -144,7 +191,7 @@ export function renderPage(p,d,ctx) {
         lines.push(`${indent}  - → OSD: ${targets.length?targets.map(t=>ref(t)).join(', '):md(r.target?.name??r.label)}`);
       } else {
         const target=r.event?{file:'Events.md'}:operations.get(r.target?.id);
-        lines.push(`${indent}  - → ${r.event?'Event':'Operation'}: ${target && r.target ? ref(target,r.target.name,anchor(r.event?'event':'op',r.target.id)):md(r.label)}`);
+        lines.push(`${indent}  - → ${r.event?'Event':'Operation'}: ${target && r.target ? ref(target,r.target.name,r.event?anchor('event',r.target.id):target.fragment):md(r.label)}`);
         if(r.depth!==undefined)code.push(`  p${r.source}${r.event?'--)':'->>'}p${r.destination}: ${mm(r.label)}`);
       }
     }
@@ -164,7 +211,7 @@ export function renderPage(p,d,ctx) {
     if(graph) lines.push('','## Diagram','','```mermaid',...graph,'```');
   }
   const notes=symbols.filter(s=>s.fields.Type==='Note'&&s.fields.Text);
-  if(notes.length) lines.push('','## Notes','',...notes.map(n=>`- ${mention(n.fields.Text)}`));
+  if(notes.length && u?.kind!=='class') lines.push('','## Notes','',...notes.map(n=>`- ${mention(n.fields.Text)}`));
   const related=d.relations.map(r=>lookup.get(r.item.id)).filter(t=>t&&t.id!==p.id);
   if(related.length) lines.push('','## Related diagrams','',...[...new Set(related)].map(t=>`- ${ref(t)}`));
   return lines;

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isTransientRead } from './direct-models.mjs';
 import { loadNativeCatalog, withNativeDetails } from './native-content.mjs';
-import { planPages, renderPage, indexes, auxiliary, backlinks, safeName } from './export-markdown.mjs';
+import { planPages, renderPage, indexes, auxiliary, backlinks, safeName, displayedClasses, operationAnchors } from './export-markdown.mjs';
 
 async function exists(file) {
   try { await lstat(file); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; }
@@ -41,7 +41,7 @@ export async function exportModel(selection, base, {
   const work=path.join(run, '.reader-work'), staging=path.join(work,'pages'), snapshot=path.join(work,'data');
   await mkdir(snapshot,{recursive:true});
   const pages=planPages(index.entries,path.join(staging,modelName));
-  const fingerprint=createHash('sha256').update(JSON.stringify([1,sortedKey(selection),index.contextId,pages.map(p=>[p.id,p.name,p.type])])).digest('hex');
+  const fingerprint=createHash('sha256').update(JSON.stringify([2,sortedKey(selection),index.contextId,pages.map(p=>[p.id,p.name,p.type])])).digest('hex');
   const manifest=path.join(work,'manifest.json');
   if(resume && (await json(manifest)).fingerprint!==fingerprint) throw new Error('Model alebo zoznam diagramov sa zmenil. Spusť nový export.');
   if(!resume) await writeFile(manifest,JSON.stringify({fingerprint}),{flag:'wx'});
@@ -111,7 +111,8 @@ export async function exportModel(selection, base, {
   for(const p of pages) {
       check();
       const {uml}= (await json(dataFile(p))).diagram;
-      for(const c of uml?.classes??[]) for(const op of c.operations) if(!operations.has(op.id)) operations.set(op.id,p);
+      if(uml?.classes)for(const [id,fragment] of operationAnchors(displayedClasses(uml.classes)))
+        if(!operations.has(id))operations.set(id,{id:p.id,file:p.file,back:p.back,fragment});
       if(uml?.unplacedCount)p.unplacedCount=uml.unplacedCount;
       for(const r of [...(uml?.rows??[]),...(uml?.unplaced??[])]) if(r.kind==='message' && r.target) {
         messages.set(r.target.id,r.target);
@@ -135,6 +136,7 @@ export async function exportModel(selection, base, {
         } else throw new Error(`Nepodporovaný cieľ správy: ${e.type}`);
     });
   }
+  for(const [id,fragment] of operationAnchors(others.values()))operations.get(id).fragment=fragment;
   const names=[...byName.keys()].filter(n=>n.length>=12).sort((a,b)=>b.length-a.length);
   const mentions=names.length?new RegExp(names.map(s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|'),'g'):null;
   const ctx={selection,lookup,usage,operations,byName,mentions};

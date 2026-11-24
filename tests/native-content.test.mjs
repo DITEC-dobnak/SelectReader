@@ -125,6 +125,25 @@ test('reads low-tag single parameter groups without treating their 16-bit length
   assert.equal(decoded.get(0x2a).get(7).toString(), 'Configuration');
 });
 
+test('diagram detail uses a 60-second idle timeout without changing other details or explicit overrides', async () => {
+  const selection = { server: 'test-server', repository: 'Example', model: 'Model' };
+  const timeouts = [], stop = new Error('test connection stop');
+  const options = {
+    repositories: async () => ({ repositories: [{ name: 'Example', server: 'test-server', port: 6200 }] }),
+    windowsConnect: async () => ({ method: 'windows-smb', verifiedUserId: user, shareReadable: true,
+      networkIdentityVerified: true, credentialsRequested: false, persistentMapping: false }),
+    connect: async (_server, settings) => {
+      timeouts.push([settings.timeoutMs, settings.idleTimeout]);
+      throw stop;
+    },
+  };
+  for (const [nativeClass, override] of [['_Ent2_UseCaseDiagram'], ['_Ent2_UseCase'], ['_Ent2_ClassDiagram', 8000]]) {
+    await assert.rejects(loadNativeDetail(selection, { nativeClass }, null,
+      { ...options, ...(override ? { timeoutMs: override } : {}) }), /Priame načítanie modelov zlyhalo/);
+  }
+  assert.deepEqual(timeouts, [[60000, true], [15000, true], [8000, true]]);
+});
+
 test('full catalog selects the working context, streams diagrams first and reports timed-out classes explicitly', async () => {
   const modelId = '00010002000000ff';
   const selection = { server: 'test-server', repository: 'Example', model: 'Model' };
