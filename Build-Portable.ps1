@@ -9,7 +9,7 @@ $dist = Join-Path $PSScriptRoot 'dist'
 try {
     $runtime = New-Item -ItemType Directory -Path (Join-Path $app 'runtime') -Force
     Copy-Item -LiteralPath $node,(Join-Path (Split-Path $node) 'LICENSE') -Destination $runtime.FullName
-    $modules = 'server','reader','direct-broker','direct-models','native-auth','native-content','native-text',
+    $modules = 'server','reader','diagnostic-log','direct-broker','direct-models','native-auth','native-content','native-text',
         'model-export','export-folder','export-markdown','uml-data','windows-smb'
     foreach ($module in $modules) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot "$module.mjs") -Destination $app

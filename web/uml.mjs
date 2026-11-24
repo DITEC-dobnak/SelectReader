@@ -56,8 +56,72 @@ function lines(value, width = 48) {
   return result;
 }
 
+function edgeNodes(edge, nodes) {
+  return edge.ends ? edge.ends.map(end => nodes.find(node => node.target?.id === end.classId &&
+    (!edge.symbolIds || edge.symbolIds.includes(node.id)))) : edge.symbolIds.map(id => nodes.find(node => node.id === id));
+}
+
+const branchNumber = edge => /^\d+$/.test(edge.label) ? Number(edge.label) : Infinity;
+const endCaption = end => [end.name,end.multiplicity].filter(Boolean).join(' ');
+
+function branchTrees(rows, edges) {
+  const members = rows.flat(), order = new Map(members.map((m,i) => [m,i]));
+  const children = new Map(members.map(m => [m,new Map()])), incoming = new Set();
+  for (const edge of edges) {
+    let [parent,child] = edgeNodes(edge,members);
+    if (edge.type === 'generalization') [parent,child] = [child,parent];
+    if (!parent || !child || parent === child) continue;
+    const siblings = children.get(parent);
+    siblings.set(child, Math.min(siblings.get(child) ?? Infinity, branchNumber(edge)));
+    incoming.add(child);
+  }
+  const seen = new Set(), trees = [];
+  for (const root of [...members.filter(m => !incoming.has(m)), ...members]) {
+    if (seen.has(root)) continue;
+    seen.add(root);
+    const levels = [[root]], spans = new Map(), branches = new Map();
+    let branched = false;
+    for (const level of levels) {
+      const next = [];
+      for (const parent of level) {
+        const siblings = children.get(parent);
+        const kids = [...siblings.keys()].filter(m => !seen.has(m)).sort((a,b) =>
+          siblings.get(a)-siblings.get(b) || order.get(a)-order.get(b));
+        for (const m of kids) seen.add(m);
+        branches.set(parent,kids);
+        next.push(...kids);
+        if (kids.length > 1) branched = true;
+      }
+      if (next.length) levels.push(next);
+    }
+    if (!branched) continue;
+    // Reserve one slot per leaf, then center each parent over its own children.
+    for (const level of [...levels].reverse()) for (const m of level)
+      spans.set(m, Math.max(1, branches.get(m).reduce((sum,kid) => sum + spans.get(kid), 0)));
+    const starts = new Map([[root,0]]), slots = new Map();
+    for (const level of levels) for (const m of level) {
+      let offset = starts.get(m);
+      slots.set(m, offset + (spans.get(m)-1)/2);
+      for (const kid of branches.get(m)) { starts.set(kid,offset); offset += spans.get(kid); }
+    }
+    // Ancestors of a wide fan need not reserve a whole descendant subtree
+    // on their own (much narrower) level.
+    const widestCount = Math.max(...levels.map(r => r.length));
+    const widest = levels.findIndex(level => level.length === widestCount);
+    for (let i = widest-1; i >= 0; i--) {
+      const level = levels[i], next = levels[i+1];
+      if (next.length < 3 && level.every(m => spans.get(m) <= 2)) continue;
+      const center = (Math.min(...next.map(m=>slots.get(m))) + Math.max(...next.map(m=>slots.get(m))))/2;
+      level.forEach((m,j) => slots.set(m,center + j - (level.length-1)/2));
+    }
+    trees.push({levels,slots});
+  }
+  return trees;
+}
+
 export function classLayout(data, measure = value => String(value).length * 9, symbols = []) {
   const nodes = [], groups = [];
+  const fanRoutes = new Map();
   const positions = new Map();
   for (const symbol of symbols) {
     const xy = symbol.fields?.Position?.trim().split(/\s+/).map(Number);
@@ -79,42 +143,116 @@ export function classLayout(data, measure = value => String(value).length * 9, s
     for (const m of item.operations) fit(memberLabel(m,true,item.signature),`${m.isAbstract?'italic ':''}14px Arial`);
   });
   let y = 55;
+  const columnGap = 48, rowGap = 56;
   for (const {namespace,members} of sections) {
     const top = y;
     const positioned = members.every(item => positions.has(item.id));
     const rows = [];
-    let minX = 0;
+    let minX = 0, xScale = 0;
     if (positioned) {
       minX = Math.min(...members.map(item => positions.get(item.id)[0]));
       let rowY = -Infinity;
       for (const item of [...members].sort((a,b) => positions.get(a.id)[1] - positions.get(b.id)[1])) {
         const itemY = positions.get(item.id)[1];
         // Slight native offsets are common even for classes on the same row.
-        if (itemY - rowY > 32) { rows.push([]); rowY = itemY; }
+        if (itemY - rowY > 96) { rows.push([]); rowY = itemY; }
         rows.at(-1).push(item);
       }
       for (const row of rows) row.sort((a,b) => positions.get(a.id)[0] - positions.get(b.id)[0]);
+      const span = Math.max(...members.map(item => positions.get(item.id)[0])) - minX;
+      // Keep relative branch positions, but don't reserve empty native columns.
+      const slots = Math.max(2, ...rows.map(row => row.length));
+      xScale = span ? Math.min(.32, (slots - 1) * (Math.max(...columnWidths) + columnGap) / span) : 0;
     } else {
       for (let start = 0; start < members.length; start += 2) rows.push(members.slice(start, start + 2));
     }
+    const heightOf = item => 88 + Math.max(1, item.attributes.length) * 21 + Math.max(1, item.operations.length) * 21;
+    const sectionHeight = rows.reduce((sum, row) => sum + Math.max(...row.map(heightOf)) + rowGap, 0);
+    const stride = Math.max(...columnWidths) + columnGap;
+    const wrap = rows.length >= 6 && sectionHeight > Math.max(2, ...rows.map(r => r.length)) * stride * 1.3;
+    let displayRows = rows;
+    if (wrap) {
+      // Keep the opening branch intact; fold the remaining levels across the page.
+      const count = Math.min(5, Math.max(3, Math.ceil(Math.sqrt(members.length / 1.5))));
+      displayRows = rows.slice(0, 2);
+      const tail = rows.slice(2).flat();
+      for (let i = 0; i < tail.length; i += count) {
+        const band = tail.slice(i, i + count);
+        displayRows.push(i / count % 2 ? band.reverse() : band);
+      }
+    }
+    const treeSlots = new Map();
+    const treeRows = [];
+    for (const {levels,slots} of branchTrees(rows,data.edges ?? [])) {
+      treeRows.push(...levels);
+      for (const [item,slot] of slots) treeSlots.set(item,slot);
+    }
+    if (treeRows.length) displayRows = [...treeRows,
+      ...displayRows.map(row => row.filter(m => !treeSlots.has(m))).filter(row => row.length)];
+    const rowOf = new Map(displayRows.flatMap((row,i) => row.map(m => [m,i])));
+    const fans = new Map(), arrivals = new Map(), trackStep = 24;
+    for (const edge of data.edges ?? []) {
+      const [a,b] = edgeNodes(edge,members);
+      if (!a || !b || Math.abs(rowOf.get(a)-rowOf.get(b)) !== 1) continue;
+      const [parent,child] = rowOf.get(a)<rowOf.get(b) ? [a,b] : [b,a];
+      if (!fans.has(parent)) fans.set(parent,[]);
+      const link = {edge,parent,child,reverse:parent!==a};
+      fans.get(parent).push(link);
+      if (!arrivals.has(child)) arrivals.set(child,[]);
+      arrivals.get(child).push(link);
+    }
     let sectionRight = 0;
-    for (const row of rows) {
+    const placed = new Map();
+    for (const [rowIndex, row] of displayRows.entries()) {
       let rowHeight = 0;
       let nextX = 45;
       for (const [column, item] of row.entries()) {
-        const height = 88 + Math.max(1, item.attributes.length) * 21 + Math.max(1, item.operations.length) * 21;
-        const width = positioned ? Math.max(...columnWidths) : columnWidths[column];
-        const x = positioned ? Math.max(nextX, 45 + (positions.get(item.id)[0] - minX) * .5) : nextX;
-        nodes.push({ ...item, x, y, width, height });
+        const height = heightOf(item);
+        const baseWidth = positioned || wrap || treeSlots.has(item) ? Math.max(...columnWidths) : columnWidths[column];
+        const links = fans.get(item) ?? [];
+        const portSpacing = Math.max(0,...links.map(({edge,reverse}) => {
+          const end = edge.ends?.[reverse ? 1 : 0];
+          return end ? Math.ceil(measure(endCaption(end),'13px Arial')) + 20 : 0;
+        }));
+        const width = Math.max(baseWidth,(links.length+1)*portSpacing);
+        const desiredX = treeSlots.has(item) ? 45 + stride * treeSlots.get(item) :
+          positioned && !(wrap && rowIndex >= 2) ? Math.max(nextX, 45 + (positions.get(item.id)[0] - minX) * xScale) : nextX;
+        const x = Math.max(nextX, desiredX - (width-baseWidth)/2);
+        const node = { ...item, x, y, width, height };
+        nodes.push(node);
+        placed.set(item,node);
         sectionRight = Math.max(sectionRight, x + width);
-        nextX = x + width + 100;
+        nextX = x + width + columnGap;
         rowHeight = Math.max(rowHeight, height);
       }
-      y += rowHeight + 130;
+      const count = Math.max(...row.map(item => fans.get(item)?.length ?? 0),
+        ...(displayRows[rowIndex+1] ?? []).map(item => arrivals.get(item)?.length ?? 0));
+      y += rowHeight + rowGap + Math.max(0,count-1)*trackStep;
     }
-    if (namespace) groups.push({ name: namespace, x: 20, y: top - 35, width: sectionRight + 5, height: y - top - 65 });
+    for (const list of arrivals.values()) list.sort((a,b) =>
+      placed.get(a.parent).x-placed.get(b.parent).x || branchNumber(a.edge)-branchNumber(b.edge));
+    for (const [parent,links] of fans) {
+      const p = placed.get(parent);
+      links.sort((a,b) => placed.get(a.child).x - placed.get(b.child).x || branchNumber(a.edge)-branchNumber(b.edge));
+      const routes = links.map((link,i) => {
+        const {edge,child,reverse} = link, c = placed.get(child);
+        const incoming = arrivals.get(child), j = incoming.indexOf(link);
+        const start = [p.x+p.width*(i+1)/(links.length+1), p.y+p.height];
+        const end = [c.x+c.width*(j+1)/(incoming.length+1), c.y];
+        return {edge,reverse,start,end,arrivalLane: incoming.length-1-j, crowded:incoming.length>1};
+      });
+      // The outermost links turn first, so inner links do not cross them.
+      routes.sort((a,b) => Math.abs(b.end[0]-b.start[0])-Math.abs(a.end[0]-a.start[0]));
+      routes.forEach(({edge,reverse,start,end,arrivalLane,crowded},i) => {
+        const rank = crowded && links.length < 3 ? arrivalLane : routes.length-1-i;
+        const lane = Math.max(start[1]+12, end[1]-rowGap/2-rank*trackStep);
+        const path = [start,[start[0],lane],[end[0],lane],end];
+        fanRoutes.set(edge,reverse ? path.reverse() : path);
+      });
+    }
+    if (namespace) groups.push({ name: namespace, x: 20, y: top - 35, width: sectionRight + 5, height: y - top - rowGap + 48 });
   }
-  return { nodes, groups, width: Math.max(500, ...nodes.map(node => node.x + node.width + 90)), height: y + 40 };
+  return { nodes, groups, fanRoutes, width: Math.max(500, ...nodes.map(node => node.x + node.width + 90)), height: y + 40 };
 }
 
 export function sequenceLayout(data, { detailedSteps = false } = {}) {
@@ -146,6 +284,107 @@ function memberLabel(member, operation, signature) {
   return `${member.name}${signature ? `(${member.parameters.join(', ')})${member.type ? `: ${member.type}` : ''}` : '()'}`;
 }
 
+export function classRoute(a, b, boxes, used = [], gutters = [], preferred) {
+  let best, bestCost = Infinity, bestConflicts = Infinity;
+  const cx = n => n.x + n.width / 2, cy = n => n.y + n.height / 2;
+  const length = (p,q) => Math.abs(p[0]-q[0]) + Math.abs(p[1]-q[1]);
+  const consider = (...raw) => {
+    const path = [];
+    for (const point of raw) {
+      const last = path.at(-1), prev = path.at(-2);
+      if (last && !length(last,point)) continue;
+      if (prev && length(prev,point) === length(prev,last)+length(last,point) &&
+          (prev[0]===point[0] || prev[1]===point[1])) path.pop();
+      path.push(point);
+    }
+    let cost = 12 * path.length, conflicts = 0;
+    for (let i=1; i<path.length; i++) {
+      const p = path[i-1], q = path[i];
+      const x = Math.min(p[0],q[0]), X = Math.max(p[0],q[0]);
+      const y = Math.min(p[1],q[1]), Y = Math.max(p[1],q[1]);
+      // Only the first/last segment may touch its port; never enter a box.
+      for (const box of boxes) {
+        const pad = (box === a && i === 1) || (box === b && i === path.length-1) ? 0 : 4;
+        if (X > box.x-pad && x < box.x+box.width+pad &&
+            Y > box.y-pad && y < box.y+box.height+pad) return;
+      }
+      for (const [r,s] of used) {
+        const loX = Math.min(r[0],s[0]), hiX = Math.max(r[0],s[0]);
+        const loY = Math.min(r[1],s[1]), hiY = Math.max(r[1],s[1]);
+        if (x===X && loX===hiX ? x===loX && Math.min(Y,hiY)>Math.max(y,loY) :
+            y===Y && loY===hiY ? y===loY && Math.min(X,hiX)>Math.max(x,loX) :
+            X>=loX && x<=hiX && Y>=loY && y<=hiY &&
+              ![p,q].some(t => !length(t,r) || !length(t,s))) conflicts++;
+      }
+      if (conflicts > bestConflicts) return;
+      cost += length(p,q);
+    }
+    if (conflicts < bestConflicts || (conflicts === bestConflicts && cost < bestCost)) {
+      best = path; bestCost = cost; bestConflicts = conflicts;
+    }
+  };
+  if (preferred) consider(...preferred);
+  if (best && (!bestConflicts || (a !== b && a.y === b.y && preferred?.[0][1] === a.y+a.height))) {
+    // Keep reserved tracks even when a shorter generic path exists.
+  } else if (a === b) {
+    for (const sign of [1,-1]) {
+      const x = a.x + (sign===1 ? a.width : 0), y = a.y+a.height/3, Y = a.y+a.height*2/3;
+      consider([x,y],[x+20*sign,y],[x+20*sign,Y],[x,Y]);
+    }
+  } else {
+    const right = cx(b) >= cx(a), down = cy(b) >= cy(a);
+    const sideA = [a.x+(right?a.width:0),cy(a)], sideB = [b.x+(right?0:b.width),cy(b)];
+    const midX = (sideA[0]+sideB[0])/2;
+    consider(sideA,[midX,sideA[1]],[midX,sideB[1]],sideB);
+    const port = (n,other) => cx(n) + Math.max(-n.width/4,Math.min(n.width/4,(cx(other)-cx(n))/2));
+    const x = port(a,b), X = port(b,a);
+    const y = a.y+(down?a.height:0), Y = b.y+(down?0:b.height);
+    for (const lane of [(y+Y)/2,y+(down?16:-16),Y+(down?-16:16)]) {
+      consider([x,y],[x,lane],[X,lane],[X,Y]);
+    }
+    consider([x,y],[x,sideB[1]],sideB);
+    // Every class row has a free gutter above it. Join two such gutters via
+    // a nearby column gap, or via the outside of the diagram for long edges.
+    const lanes = new Set([a.x-16,a.x+a.width+16,b.x-16,b.x+b.width+16,...gutters,
+      Math.min(...boxes.map(n=>n.x))-16,Math.max(...boxes.map(n=>n.x+n.width))+16]);
+    for (const gap of [12,24]) {
+      const topA = a.y-gap, topB = b.y-gap;
+      if (topA === topB) consider([x,a.y],[x,topA],[X,topB],[X,b.y]);
+      for (const lane of lanes) {
+        consider([x,a.y],[x,topA],[lane,topA],[lane,topB],[X,topB],[X,b.y]);
+        consider([x,a.y],[x,topA],[lane,topA],[lane,sideB[1]],sideB);
+      }
+    }
+  }
+  if (!best) throw new Error('Medzi prvkami diagramu sa nenašla voľná trasa.');
+  best.slice(1).forEach((q,i) => used.push([best[i],q]));
+  return best;
+}
+
+// Leave a short break at a transverse crossing, never at a port or a bend.
+export function crossingPath(points, previous) {
+  let d = `M${points[0]}`;
+  for (let i=1;i<points.length;i++) {
+    const a=points[i-1], b=points[i], axis=a[0]===b[0]?1:0, fixed=1-axis;
+    const sign=Math.sign(b[axis]-a[axis]), length=Math.abs(b[axis]-a[axis]);
+    const cuts=[];
+    for (const [p,q] of previous) {
+      const t=sign*(p[axis]-a[axis]);
+      if (p[axis]===q[axis] && t>6 && t<length-6 &&
+          Math.min(p[fixed],q[fixed])<a[fixed] && a[fixed]<Math.max(p[fixed],q[fixed])) cuts.push(t);
+    }
+    const point=t=>axis===0?[a[0]+sign*t,a[1]]:[a[0],a[1]+sign*t];
+    let resume=0;
+    for (const t of cuts.sort((u,v)=>u-v)) {
+      if (t-4>resume) d+=` L${point(t-4)}`;
+      resume=t+4;
+      d+=` M${point(resume)}`;
+    }
+    d+=` L${b}`;
+  }
+  return d;
+}
+
 function classDiagram(svg, data, onOpen, symbols) {
   const ctx = document.createElement('canvas').getContext('2d');
   const measure = (value,font) => { ctx.font=font; return ctx.measureText(value).width; };
@@ -164,43 +403,63 @@ function classDiagram(svg, data, onOpen, symbols) {
     svg.append(element('rect', { x: group.x, y: group.y, width: group.width, height: group.height, fill: '#f2f7fa', stroke: '#9ab3c1', rx: 8 }));
     text(svg, group.name, group.x + 12, group.y + 24, { 'font-weight': 600, 'text-anchor': 'start' });
   }
-  for (const edge of data.edges) {
-    let ends;
-    if (edge.ends) ends = edge.ends.map(end => layout.nodes.find(node => node.target.id === end.classId &&
-      (!edge.symbolIds || edge.symbolIds.includes(node.id))));
-    else ends = edge.symbolIds.map(id => layout.nodes.find(node => node.id === id));
-    if (ends.length !== 2 || ends.some(end => !end)) { missing.push(edge.id); continue; }
-    const [a, b] = ends, right = b.x >= a.x, vertical = a.y !== b.y, self = a.id === b.id;
-    const sharedX = (Math.max(a.x, b.x) + Math.min(a.x + a.width, b.x + b.width)) / 2;
-    const portX = node => Math.max(node.x + node.width / 4,
-      Math.min(node.x + node.width * .75, sharedX));
-    const start = self ? [a.x + a.width, a.y + a.height / 3] : vertical ? [portX(a), a.y + (b.y > a.y ? a.height : 0)] : [a.x + (right ? a.width : 0), a.y + a.height / 2];
-    const finish = self ? [a.x + a.width, a.y + a.height * 2 / 3] : vertical ? [portX(b), b.y + (b.y > a.y ? 0 : b.height)] : [b.x + (right ? 0 : b.width), b.y + b.height / 2];
-    const mid = (start[0] + finish[0]) / 2;
-    const midY = (start[1] + finish[1]) / 2;
+  const used = [], captions = [];
+  const gutters = [Math.min(...layout.nodes.map(n=>n.x))-16,Math.max(...layout.nodes.map(n=>n.x+n.width))+16];
+  function drawEdge(edge, boxes) {
+    const ends = edgeNodes(edge, layout.nodes);
+    if (ends.length !== 2 || ends.some(end => !end)) { missing.push(edge.id); return; }
+    let preferred = layout.fanRoutes.get(edge);
+    if (!preferred && edge.ends && ends[0] !== ends[1] && ends[0].y === ends[1].y) {
+      const [a,b] = ends, right = b.x > a.x;
+      const x = a.x+a.width*(right ? .85 : .15), side = right ? b.x : b.x+b.width;
+      const lane = Math.max(...layout.nodes.filter(n => n.y===a.y &&
+        n.x>=Math.min(a.x,b.x) && n.x<=Math.max(a.x,b.x)).map(n=>n.y+n.height)) + 24;
+      const endY = b.y + b.height/2, bend = side + (right ? -16 : 16);
+      preferred = [[x,a.y+a.height],[x,lane],[bend,lane],[bend,endY],[side,endY]];
+    }
+    const previous = used.length;
+    const path = classRoute(...ends, boxes, used, gutters, preferred);
     const group = element('g', { class: 'symbol uml-association' });
     group.dataset.text = normalize([edge.label, ...(edge.ends ?? []).map(end => `${end.name} ${end.multiplicity}`)].join(' '));
     interactive(group, edge.target, onOpen);
-    group.append(element('polyline', { points: (self ? [start, [start[0] + 70, start[1]], [finish[0] + 70, finish[1]], finish] :
-      vertical ? [start, [start[0], midY], [finish[0], midY], finish] : [start, [mid, start[1]], [mid, finish[1]], finish]).map(point => point.join(',')).join(' '),
+    group.append(element('path', { d: crossingPath(path,used.slice(0,previous)),
       fill: 'none', stroke: '#315b73', 'stroke-width': 1.5,
       ...(edge.type === 'dependency' ? { 'stroke-dasharray': '6 4', 'marker-end': 'url(#uml-dependency)' } :
         edge.type === 'generalization' ? { 'marker-end': 'url(#uml-inheritance)' } : {}) }));
-    if (edge.label) {
-      const onVertical = self || (vertical ? start[0] === finish[0] : start[1] !== finish[1]);
-      const x = (self ? start[0]+70 : mid) + (onVertical ? 8 : 0);
-      let y = (start[1]+finish[1])/2 - (onVertical ? 0 : 7);
-      const width = measure(edge.label,'14px Arial'), left = onVertical ? x : x-width/2;
-      while (occupied.some(b=>left < b.right+2 && left+width > b.left-2 && Math.abs(y-b.y)<18)) y-=18;
-      occupied.push({left,right:left+width,y});
-      text(group,edge.label,x,y,{'text-anchor':onVertical?'start':'middle'});
+    if (edge.ends) {
+      const [a,b] = edge.ends;
+      const title = element('title');
+      title.textContent = `${ends[0].name} (${endCaption(a)||'–'}) → ${ends[1].name} (${endCaption(b)||'–'})` +
+        (edge.label ? ` · ${edge.label}` : '');
+      group.append(title);
+      for (const [i,end] of edge.ends.entries()) {
+        if (!endCaption(end)) continue;
+        const [x,y] = i ? path.at(-1) : path[0], [u,v] = i ? path.at(-2) : path[1];
+        const value = endCaption(end), width = measure(value,'13px Arial');
+        const candidates = [];
+        for (const distance of [0,6,12]) {
+          if (x===u) {
+            const baseline = y+(v>y ? 16+distance : -6-distance);
+            candidates.push([x+6,baseline],[x-6-width,baseline]);
+          } else {
+            const left = x+(u<x ? -6-width-distance : 6+distance);
+            candidates.push([left,y-6],[left,y+16]);
+          }
+        }
+        captions.push({group,value,width,candidates,end:true});
+      }
     }
-    for (const [index, end] of (edge.ends ?? []).entries()) {
-      const point = index ? finish : start;
-      const side = self || vertical || (index ? !right : right) ? 1 : -1;
-      const dy = vertical && !self ? ((index===0)===(finish[1]>start[1]) ? 18 : -10) : -8;
-      text(group, [end.name, end.multiplicity].filter(Boolean).join(' '), point[0] + side*8, point[1] + dy,
-        { 'text-anchor': side>0 ? 'start' : 'end', 'font-size': 12 });
+    if (edge.label) {
+      const label = edge.label === 'Aggregates' ? 'agregácia' : edge.label;
+      const segments = path.slice(1).map((p,i)=>[path[i],p]).sort(([a,b],[c,d])=>
+        Math.hypot(c[0]-d[0],c[1]-d[1])-Math.hypot(a[0]-b[0],a[1]-b[1]));
+      const width = measure(label,'600 14px Arial'), candidates = [];
+      for (const [[x1,y1],[x2,y2]] of segments) for (const t of [.5,.35,.65,.2,.8]) {
+        const x=x1+(x2-x1)*t, y=y1+(y2-y1)*t;
+        if (x1===x2) candidates.push([x+8,y+4],[x-width-8,y+4]);
+        else candidates.push([x-width/2,y-7],[x-width/2,y+18]);
+      }
+      captions.push({group,value:label,width,candidates,end:false});
     }
     svg.append(group);
   }
@@ -229,14 +488,36 @@ function classDiagram(svg, data, onOpen, symbols) {
     const boxWidth = Math.max(100, ...wrapped.map(line => measure(line, '14px Arial') + 30));
     const onLeft = nodes.every(node => node.x === firstColumn);
     const x = onLeft ? -boxWidth - 25 : layout.width;
-    noteBoxes.push({ x, y, width: boxWidth, height, wrapped });
+    noteBoxes.push({ x, y, width: boxWidth, height, wrapped, nodes });
     nextY = y + height + 25;
     left = Math.min(left, x - 25);
     right = Math.max(right, x + boxWidth + 25);
-    for (const node of nodes) svg.append(element('line', {
-      x1: node.x + (onLeft ? 0 : node.width), y1: centerY(node), x2: x + (onLeft ? boxWidth : 0), y2: y + height / 2,
+  }
+  const boxes = [...layout.nodes,...noteBoxes];
+  for (const edge of layout.fanRoutes.keys()) drawEdge(edge, boxes);
+  for (const edge of data.edges) if (!layout.fanRoutes.has(edge)) drawEdge(edge, boxes);
+  for (const box of noteBoxes) {
+    for (const node of box.nodes) svg.append(element('polyline', {
+      points: classRoute(node,box,boxes,used,gutters).map(p=>p.join(',')).join(' '), fill:'none',
       stroke: '#738796', 'stroke-width': 1.5, 'stroke-dasharray': '6 4', 'pointer-events': 'none',
     }));
+  }
+  // Place end labels first, after all connector geometry is known.
+  for (const {group,value,width,candidates,end} of captions.sort((a,b)=>Number(b.end)-Number(a.end))) {
+    let best, min = Infinity;
+    for (const [x,y] of candidates) {
+      const l=x-2, r=x+width+2, t=y-15, b=y+4;
+      const intersects = (x1,y1,x2,y2) => x1<r && x2>l && y1<b && y2>t;
+      const score = boxes.filter(n=>intersects(n.x,n.y,n.x+n.width,n.y+n.height)).length*1000 +
+        occupied.filter(n=>intersects(...n)).length*100 +
+        used.filter(([p,q])=>intersects(Math.min(p[0],q[0]),Math.min(p[1],q[1]),
+          Math.max(p[0],q[0]),Math.max(p[1],q[1]))).length;
+      if (score<min) { min=score; best=[x,y]; }
+      if (!score) break;
+    }
+    const [x,y]=best;
+    occupied.push([x-2,y-15,x+width+2,y+4]);
+    text(group,value,x,y,{'text-anchor':'start',...(end ? {'font-size':13,class:'association-caption'} : {'font-weight':600})});
   }
   for (const node of layout.nodes) {
     const group = element('g', { class: 'symbol uml-class', 'aria-label': node.name });

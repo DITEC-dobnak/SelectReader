@@ -425,28 +425,6 @@ window.addEventListener('pagehide', event => {
     view:viewId, desktopClose:!!state?.desktop, confirmedExport:exportActive || exportStarting
   })], {type:'application/json'}));
 });
-for (const command of ['stop','restart']) {
-  $(`reader-${command}`).onclick = async () => {
-    $('reader-restart').disabled = $('reader-stop').disabled = true;
-    try {
-      await api(`/api/reader/${command}`,{});
-    } catch (error) {
-      $('reader-restart').disabled = $('reader-stop').disabled = false;
-      setText('reader-status',error.message);
-      return;
-    }
-    leaving=true;
-    clearTimeout(pollTimer);
-    setText('reader-status', command==='stop' ? 'Reader sa vypína. Kartu môžeš zavrieť. Nabudúce spusti Start.cmd.' : 'Reader sa reštartuje…');
-    if(command==='restart') {
-      for(let attempt=0;attempt<30;attempt++){
-        await new Promise(resolve=>setTimeout(resolve,1000));
-        try { const next=await api('/api/state'); if(next.lifecycle){location.reload();return;} }
-        catch(error){ if(attempt===29)setText('reader-status',`Reader ešte neodpovedá. Obnov stránku alebo spusti Start.cmd. ${error.message}`); }
-      }
-    }
-  };
-}
 async function poll() {
   if(leaving)return;
   clearTimeout(pollTimer);
@@ -482,7 +460,6 @@ async function poll() {
 
 function renderState() {
   const selection = state.selection, status = state.status;
-  $('reader-restart').hidden = $('reader-stop').hidden = !state.lifecycle;
   const indexing = !!selection && !state.offline && status.phase === 'loading';
   $('catalog-loading').hidden = !indexing;
   if (indexing) setText('catalog-progress', `Načítavam katalóg${status.current ? ` · ${status.current}` : '…'}`);

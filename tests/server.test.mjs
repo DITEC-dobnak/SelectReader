@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { once } from 'node:events';
-import { mkdtemp, rm, access, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, access, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Cache } from '../reader.mjs';
 import { createServer, Reader, currentWindowsIdentity, checkRelease } from '../server.mjs';
 import { ModelReadError } from '../direct-models.mjs';
+import { diagnosticLog } from '../diagnostic-log.mjs';
 import { selection, diagram, item, snapshot } from './fixture.mjs';
 
 async function setup(t, options = {}) {
@@ -28,6 +29,27 @@ async function setup(t, options = {}) {
   });
   return { reader, cache, server, base, post };
 }
+
+test('diagnostics rotate across restarts, keep only two bounded logs and omit private fields', async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'select-reader-log-test-'));
+  t.after(() => rm(directory, {recursive:true, force:true}));
+  for (let run=0; run<2; run++) {
+    const logger=diagnosticLog(directory,512);
+    for (let i=0; i<30; i++)
+      logger.error({event:'request-failed',code:'MODEL_READ',status:500,password:'private',message:'secret model name'});
+  }
+  assert.deepEqual((await readdir(directory)).sort(),['reader.log','reader.previous.log']);
+  for (const name of await readdir(directory)) {
+    const bytes=await readFile(path.join(directory,name));
+    assert.ok(bytes.length>0 && bytes.length<=512);
+    assert.doesNotMatch(bytes.toString(),/private|secret/);
+    for (const line of bytes.toString().trim().split('\n')) {
+      const record=JSON.parse(line);
+      assert.equal(record.code,'MODEL_READ');
+      assert.equal(record.status,500);
+    }
+  }
+});
 
 test('release notification only advertises newer stable versions, comparing numeric components', async () => {
   const release = (tag_name, extra = {}) => async () => Response.json({tag_name, ...extra});

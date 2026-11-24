@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classDiagramData, sequenceDiagramData } from '../uml-data.mjs';
-import { classLayout, renderUml, sequenceLayout } from '../web/uml.mjs';
+import { classLayout, classRoute, crossingPath, renderUml, sequenceLayout } from '../web/uml.mjs';
 import { textMatches } from '../web/diagram.mjs';
 
 test('diagram search finds each visible occurrence case-insensitively and without accents', () => {
@@ -16,28 +16,75 @@ const item = (id, name, nativeClass) => ({ id, name, nativeClass, nativeId: id }
 const relation = (role, item) => ({ role, item });
 const data = (attributes = {}, relations = []) => ({ attributes, relations });
 
-test('a stored note link connects the note box to the referenced class symbol only', t => {
-  const svgNode = tag => ({ tag, attrs: {}, children: [], dataset: {},
+function mockSvg(t) {
+  const svgNode = tag => ({ tag, attrs: {}, children: [], dataset: {}, addEventListener() {},
     append(child) { this.children.push(child); }, setAttribute(k, v) { this.attrs[k] = v; } });
   t.after(() => { delete globalThis.document; });
   globalThis.document = { createElementNS: (_, tag) => svgNode(tag),
     createElement: () => ({ getContext: () => ({ measureText: s => ({ width: s.length * 8 }) }) }) };
-  const svg = svgNode('svg');
+  return svgNode('svg');
+}
+
+test('confirmation diagram places all relationship captions outside class boxes, lines and other captions', t => {
+  const svg = mockSvg(t);
+  const classes = ['VratenieUdajovPrePotvrdenieNastupu','Vstup','Vystup','SaSZ','Dieta'].map((name,i)=>({
+    id:String(i),name,attributes:Array.from({length:[0,1,2,6,3][i]},()=>({name:'field'})),operations:[]}));
+  const edges = [['0','1'],['0','2'],['2','3'],['2','4']].map(([a,b],i)=>({
+    ends:[{classId:a,multiplicity:'0..1'},{classId:b,multiplicity:'1'}],label:String(i%2+1)}));
+  for (const c of classes) c.target={id:c.id};
+  renderUml(svg,{kind:'class',classes,edges,notes:[]},null);
+  const obstacles=svg.children.filter(g=>g.attrs.class==='symbol uml-class').map(g=>{
+    const {x,y,width,height}=g.children.find(c=>c.tag==='rect').attrs;
+    return [x,y,x+width,y+height];
+  });
+  const groups=svg.children.filter(g=>g.attrs.class==='symbol uml-association');
+  for (const group of groups) {
+    const points=group.children.find(c=>c.tag==='path').attrs.d.matchAll(/([ML])([-\d.]+),([-\d.]+)/g);
+    let x,y;
+    for (const [,cmd,u,v] of points) {
+      if (cmd==='L') obstacles.push([Math.min(x,+u),Math.min(y,+v),Math.max(x,+u),Math.max(y,+v)]);
+      x=+u; y=+v;
+    }
+  }
+  const captions=groups.flatMap(g=>g.children.filter(c=>c.tag==='text'));
+  assert.equal(captions.length,12);
+  for (const c of captions) {
+    const {x,y}=c.attrs, right=x+8*c.textContent.length;
+    assert.ok(obstacles.every(([l,t,r,b])=>r<=x || l>=right || b<=y-13 || t>=y+2),c.textContent);
+    obstacles.push([x,y-13,right,y+2]);
+  }
+});
+
+test('a stored note link connects the note box to the referenced class symbol only', t => {
+  const svg = mockSvg(t);
   const uml = { kind: 'class', classes: ['A', 'B'].map(id => ({ id, name: id, attributes: [], operations: [] })),
     edges: [], notes: [{ id: 'n', text: 'attached' }, { id: 'u', text: 'B' }] };
   const link = (note, target) => ({ nativeClass: '_Ent2_NoteLink', relations: [
     relation('_Ent2_NoteLink_To_Note', { id: note }), relation('_Ent2_AttachedNoteLink_To_Symbol', { id: target })] });
   renderUml(svg, uml, null, { symbols: [link('n', 'B'), link('u', 'absent')] });
-  const connectors = svg.children.filter(n => n.tag === 'line' && n.attrs['stroke-dasharray']);
+  const connectors = svg.children.filter(n => n.tag === 'polyline' && n.attrs['stroke-dasharray']);
   assert.equal(connectors.length, 1);
-  const line = connectors[0].attrs;
+  const points = connectors[0].attrs.points.split(' ').map(pair=>pair.split(',').map(Number));
   const cls = svg.children.find(n => n.attrs['aria-label'] === 'B').children[0].attrs;
   const [attached, unbound] = svg.children.filter(n => n.tag === 'rect').map(n => n.attrs);
-  assert.equal(line.x1, cls.x + cls.width);
-  assert.equal(line.y1, cls.y + cls.height / 2);
-  assert.equal(line.x2, attached.x);
-  assert.equal(line.y2, attached.y + attached.height / 2);
+  assert.deepEqual(points[0], [cls.x + cls.width, cls.y + cls.height / 2]);
+  assert.deepEqual(points.at(-1), [attached.x, attached.y + attached.height / 2]);
   assert.ok(unbound.y > attached.y + attached.height);
+});
+
+test('class routes bypass intervening boxes and avoid a previously drawn crossing when possible', () => {
+  const box = x => ({x,y:60,width:80,height:60});
+  const a = box(20), b = box(340), obstacle = box(180);
+  const clear = (path, rect) => path.slice(1).every(([x,y],i) => {
+    const [u,v] = path[i];
+    return (x===u || y===v) && (Math.max(x,u)<=rect.x || Math.min(x,u)>=rect.x+rect.width ||
+      Math.max(y,v)<=rect.y || Math.min(y,v)>=rect.y+rect.height);
+  });
+  assert.ok(clear(classRoute(a,b,[a,obstacle,b]), obstacle));
+  const crossing = [[220,70],[220,110]];
+  const detour = classRoute(a,b,[a,b],[crossing]);
+  assert.ok(clear(detour,{x:219,y:70,width:2,height:40}));
+  assert.ok(classRoute(a,a,[a,b]).length>=4);
 });
 
 test('class UML reads members and both semantic association ends without a global association/role index', async () => {
@@ -90,6 +137,116 @@ test('stored CLD positions preserve the input/output branches and place SaSZ bel
   assert.ok(input.x + input.width < output.x);
   assert.ok(child.y > input.y + input.height && child.x + child.width / 2 > input.x &&
     child.x + child.width / 2 < input.x + input.width);
+});
+
+test('sparse native coordinates do not leave whole empty columns or rows between siblings', () => {
+  const classes = ['root','left','right'].map(id => ({id, name:id, attributes:[], operations:[]}));
+  const symbols = classes.map(({id}, i) => ({id, fields:{Position:['50000 0','0 600','100000 665'][i]}}));
+  const { nodes: [root,left,right] } = classLayout({classes}, undefined, symbols);
+  const gap = right.x - (left.x + left.width);
+  assert.equal(left.y, right.y);
+  assert.ok(gap > 0 && gap < left.width / 4);
+  assert.ok(left.y > root.y + root.height && left.y - root.y - root.height < root.height / 2);
+  assert.ok(root.x > left.x && root.x < right.x);
+});
+
+test('a tall chain folds across several columns without breaking the opening or overlapping classes', () => {
+  const classes = Array.from({length:32}, (_,i) => ({id:`n${i}`, name:`class${i}`, attributes:[], operations:[]}));
+  const symbols = classes.map(({id},i) => ({id, fields:{Position:`0 ${300*i}`}}));
+  const {nodes,height,width} = classLayout({classes}, undefined, symbols);
+  const byId = new Map(nodes.map(n => [n.id,n]));
+  assert.equal(byId.size,classes.length);
+  assert.ok(byId.get('n0').y < byId.get('n1').y);
+  const horizontal = classes.slice(1).filter((c,i) => byId.get(c.id).y === byId.get(classes[i].id).y);
+  assert.ok(horizontal.length > classes.length / 2);
+  assert.ok(height < 2 * width);
+  for (const a of nodes) for (const b of nodes.filter(b => b !== a && b.y === a.y))
+    assert.ok(a.x + a.width < b.x || b.x + b.width < a.x);
+});
+
+test('a branch keeps its three children side by side even with staggered source positions and a shared target', () => {
+  const classes = ['root','A','B','C','grandchild'].map(id => ({id,name:id,target:{id},attributes:[],operations:[]}));
+  const edges = [['root','A'],['root','B'],['root','C'],['B','grandchild'],['C','grandchild']]
+    .map(ids => ({type:'association', symbolIds:ids, ends:ids.map(classId => ({classId}))}));
+  const symbols = classes.map(({id},i) => ({id,fields:{Position:`0 ${i*300}`}}));
+  const {nodes} = classLayout({classes,edges},undefined,symbols);
+  const [root,a,b,c,g] = classes.map(m => nodes.find(n => n.id === m.id));
+  assert.equal(nodes.length,5);
+  assert.equal(a.y,b.y); assert.equal(b.y,c.y);
+  assert.ok(a.x+a.width < b.x && b.x+b.width < c.x);
+  assert.equal(root.x,(a.x+c.x)/2);
+  assert.ok(root.y+root.height < a.y && b.y+b.height < g.y);
+});
+
+test('dense fan-out leaves readable tracks and separate ports even for repeated links to one child', () => {
+  const classes = ['Prihlaska','A','B','C','D','E'].map(id=>({id,name:id,attributes:[],operations:[]}));
+  const edges = ['A','B','B','C','D','E'].map(id=>({symbolIds:['Prihlaska',id]}));
+  const {nodes,fanRoutes} = classLayout({classes,edges});
+  const p = nodes.find(n=>n.id==='Prihlaska'), used = [];
+  const paths = [...fanRoutes].map(([e,preferred]) =>
+    classRoute(p,nodes.find(n=>n.id===e.symbolIds[1]),nodes,used,[],preferred));
+  assert.equal(paths.length,6);
+  assert.equal(new Set(paths.map(path=>path[0][0])).size,6);
+  assert.equal(new Set(paths.map(path=>path.at(-1)[0])).size,6);
+  const lanes = paths.map(path=>path[1][1]).sort((a,b)=>a-b);
+  assert.ok(lanes.every((lane,i)=>i===0 || lane-lanes[i-1]>=20));
+});
+
+test('sibling boxes and parallel tracks follow numeric association names before unnumbered links', () => {
+  const classes = ['parent','A','B','C','D'].map(id=>({id,name:id,attributes:[],operations:[]}));
+  const edges = [['A','Aggregates'],['B','10'],['C','03'],['D','01'],['C','2']]
+    .map(([id,label])=>({symbolIds:['parent',id],label}));
+  const {nodes,fanRoutes} = classLayout({classes,edges});
+  assert.deepEqual(nodes.slice(1).sort((a,b)=>a.x-b.x).map(n=>n.id),['D','C','B','A']);
+  assert.deepEqual([...fanRoutes].sort((a,b)=>a[1][0][0]-b[1][0][0]).map(([e])=>e.label),
+    ['01','2','03','10','Aggregates']);
+});
+
+test('wide branches leave enough space for each actual source multiplicity', () => {
+  const classes = Array.from({length:20},(_,i)=>({id:String(i),name:`C${i}`,target:{id:String(i)},attributes:[],operations:[]}));
+  const edges = classes.slice(1).map(c=>({ends:[{classId:'0',multiplicity:'0..10'},{classId:c.id,multiplicity:'1'}]}));
+  const {nodes,fanRoutes} = classLayout({classes,edges},s=>s.length*8);
+  assert.ok(nodes[0].width > nodes[1].width);
+  const ports = [...fanRoutes.values()].map(path=>path[0][0]).sort((a,b)=>a-b);
+  assert.equal(ports.length,19);
+  assert.ok(ports.slice(1).every((x,i)=>x-ports[i] > '0..10'.length*8));
+});
+
+test('converging links to Adresa have separate arrivals beside the direct SaSZ–Odbor link', () => {
+  const classes = ['Prihlaska','Dieta','SaSZ','ZZ','Adresa','Odbor'].map(id=>({id,name:id,attributes:[],operations:[]}));
+  const edges = [['Prihlaska','Dieta'],['Prihlaska','SaSZ'],['Prihlaska','ZZ'],['Dieta','Adresa'],
+    ['Dieta','Adresa'],['SaSZ','Odbor'],['ZZ','Adresa']].map((symbolIds,i)=>({symbolIds,label:String(i)}));
+  const {nodes,fanRoutes} = classLayout({classes,edges});
+  const used = [], paths = new Map();
+  for (const [edge,preferred] of fanRoutes) {
+    const [a,b] = edge.symbolIds.map(id=>nodes.find(n=>n.id===id));
+    paths.set(edge,classRoute(a,b,nodes,used,[],preferred));
+  }
+  assert.equal(new Set(edges.filter(e=>e.symbolIds[1]==='Adresa').map(e=>paths.get(e).at(-1)[0])).size,3);
+  const direct = paths.get(edges[5]);
+  assert.equal(direct.length,2);
+  assert.equal(direct[0][0],direct[1][0]);
+  assert.equal(crossingPath([[10,0],[10,60]],[[[0,30],[50,30]]]),'M10,0 L10,26 M10,34 L10,60');
+});
+
+test('the output-to-automat branch clears the bottom of the taller adjacent input', () => {
+  const classes = ['root','Vstup','Vystup','Automat','Prihlaska','A','B','C'].map(id=>({id,name:id,
+    attributes:id==='Vstup'?[{name:'a'},{name:'b'},{name:'c'}]:[], operations:[]}));
+  const edges = [['root','Vstup'],['root','Vystup'],['Vystup','Automat'],['Vystup','Prihlaska'],
+    ['Prihlaska','A'],['Prihlaska','B'],['Prihlaska','C']]
+    .map((symbolIds,i)=>({symbolIds,label:String(i)}));
+  const {nodes,fanRoutes} = classLayout({classes,edges});
+  const used = [], input = nodes.find(n=>n.id==='Vstup');
+  for (const [edge,preferred] of fanRoutes) {
+    const [a,b] = edge.symbolIds.map(id=>nodes.find(n=>n.id===id));
+    const path = classRoute(a,b,nodes,used,[],preferred);
+    if (edge === edges[2]) {
+      const underInput = path.slice(1).filter(([x,y],i)=>y===path[i][1] &&
+        Math.min(x,path[i][0])<input.x+input.width && Math.max(x,path[i][0])>input.x);
+      assert.ok(underInput.length && underInput.every(([,y])=>y-input.y-input.height>=24));
+    }
+  }
+  assert.ok(fanRoutes.has(edges[2]));
 });
 
 test('a repeated class costs no additional semantic reads and retains its local symbol', async () => {

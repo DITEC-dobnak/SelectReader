@@ -13,6 +13,7 @@ import { listModels, ModelReadError, isTransientRead } from './direct-models.mjs
 import { loadNativeCatalog, loadNativeDetail } from './native-content.mjs';
 import { ExportJob } from './model-export.mjs';
 import { chooseExportFolder, openExportFolder } from './export-folder.mjs';
+import { diagnosticLog } from './diagnostic-log.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 
@@ -171,6 +172,7 @@ export class Reader {
       this.status = result.complete ? { phase: 'ready', current: '', error: null } : {
         phase: 'partial', current: '', error: `Nedokončené typy po opakovaných pokusoch: ${(result.errors ?? []).map(error => `${error.className.replace(/^_Ent2_/, '')} (${error.code})`).join(', ')}.`,
       };
+      logger.info?.({event:result.complete ? 'catalog-ready' : 'catalog-partial'});
       if (this.retryCatalog) this.scheduleRetry(catalogLoader, detailLoader, logger);
     }).catch(error => {
       const safe = error instanceof ModelReadError ? error :
@@ -424,6 +426,12 @@ export function createServer(reader, cache, {
             return json(response, 200, {opened:true});
           }
           markdownExport.start(reader, input.resume === true, input.folder || markdownExport.base);
+          logger.info?.({event:'export-start'});
+          markdownExport.finished?.then(() => {
+            const phase = markdownExport.state.phase;
+            if (phase === 'failed') logger.error({event:'export-failed'});
+            else logger.info?.({event:phase === 'cancelled' ? 'export-cancelled' : 'export-complete'});
+          });
         }
         return json(response, 202, markdownExport.state);
       }
@@ -503,31 +511,34 @@ export function createServer(reader, cache, {
         if (!missingOnly && input.offline === true) {
           if (selection.modelId && !origins.includes(request.headers.origin)) return json(response, 403, { error: 'Model otvárajte iba z lokálneho rozhrania.' });
           await reader.openOffline(selection, nativeDetail);
+          logger.info?.({event:'model-open-offline'});
         }
         else {
           if (!origins.includes(request.headers.origin)) return json(response, 403, { error: 'Model otvárajte iba z lokálneho rozhrania.' });
           await reader.openNative(selection, nativeCatalog, nativeDetail, logger, missingOnly);
+          logger.info?.({event:missingOnly ? 'catalog-retry' : 'model-open-online'});
         }
         return json(response, 200, reader.state());
       }
       return json(response, 404, { error: 'Nenájdené.' });
     } catch (error) {
-      console.error(error);
-      json(response, error.status ?? (/^(Neplatný|Chýba)/.test(error.message) ? 400 : 500), { error: error.message });
+      const status = error.status ?? (/^(Neplatný|Chýba)/.test(error.message) ? 400 : 500);
+      logger.error({event:'request-failed',status,code:error.code});
+      json(response, status, { error: error.message });
     }
   });
   server.once('close', () => clearTimeout(idleTimer));
   return server;
 }
 
-async function main() {
+async function main(logger) {
   const desktop = process.argv.includes('--desktop');
   const edge = desktop && [process.env['ProgramFiles(x86)'], process.env.ProgramFiles, process.env.LOCALAPPDATA]
     .filter(Boolean).map(base => path.join(base, 'Microsoft', 'Edge', 'Application', 'msedge.exe')).find(file => existsSync(file));
   if (desktop && !edge) throw new Error('Samostatné okno vyžaduje nainštalovaný Microsoft Edge.');
   const cache = new Cache(path.join(root, '.cache'));
   const reader = new Reader(cache);
-  const server = createServer(reader, cache, {desktop: process.argv.includes('--desktop-mode'), onExit(command) {
+  const server = createServer(reader, cache, {logger, desktop: process.argv.includes('--desktop-mode'), onExit(command) {
     reader.cancelRetry();
     reader.controller?.abort();
     server.close(async () => {
@@ -535,6 +546,7 @@ async function main() {
       process.exitCode = command === 'restart' ? 75 : 0;
     });
   }});
+  server.once('close', () => logger.info({event:'reader-closed'}));
   server.on('error', async error => {
     if (error.code === 'EADDRINUSE') {
       try {
@@ -548,9 +560,11 @@ async function main() {
       } catch (probeError) { console.error(probeError.message); }
     }
     console.error(`Server nemožno spustiť: ${error.message}`);
+    logger.error({event:'server-start-failed',code:error.code});
     process.exitCode = 1;
   });
   server.listen(4317, '127.0.0.1', () => {
+    logger.info({event:'reader-ready'});
     console.log('Select Reader: http://127.0.0.1:4317 · iba priamy TCP prístup');
     console.log('Priame čítanie modelov, vlastností, súvislostí a geometrie diagramov; Windows pripojenie bez hesla v aplikácii.');
     openWindow();
@@ -565,6 +579,7 @@ async function main() {
     const child = spawn(edge || 'explorer.exe', args, { stdio: 'ignore', windowsHide: !desktop });
     child.on('error', error => {
       console.error(`Okno sa nepodarilo otvoriť: ${error.message}`);
+      logger.error({event:'window-open-failed',code:error.code});
       if (desktop) {
         process.exitCode = 1;
         if (server.listening) server.close();
@@ -576,7 +591,13 @@ async function main() {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv.includes('--serve')) {
-    main().catch(error => { console.error(error); process.exitCode = 1; });
+    const file = diagnosticLog(path.join(root,'logs'));
+    const logger = {info:file.info, error(record) { file.error(record); console.error(record); }};
+    main(logger).catch(error => {
+      logger.error({event:'reader-start-failed',code:error.code});
+      console.error(error.message);
+      process.exitCode = 1;
+    });
   } else {
     // Keep the original Start.cmd console attached across deliberate restarts.
     const launch = open => {
