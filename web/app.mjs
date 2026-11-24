@@ -1540,3 +1540,8 @@ document.addEventListener('keydown', event => {
   }
 });
 poll();
+api('/api/update').then(({available}) => {
+  if (!available) return;
+  $('release-version').textContent = available;
+  $('release-notice').hidden = false;
+}).catch(error => console.warn('Dostupnosť novej verzie sa nepodarilo overiť.', error));

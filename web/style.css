@@ -11,6 +11,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 [hidden] { display: none !important; }
 .topbar { min-height: 36px; padding: 0 12px; display: flex; align-items: center; gap: 12px; background: white; border-bottom: 1px solid var(--border); }
 .topbar button { padding: 3px 8px; }
+#release-notice { padding: 6px 12px; background: #e4f1ff; color: #163650; }
+#release-notice a { color: #134f92; }
 .brand { text-decoration: none; color: #25334b; display: flex; align-items: center; gap: 5px; font-size: 15px; font-weight: 700; letter-spacing: -.6px; }
 .brand > span:last-child { color: #78879e; font-weight: 400; }
 .brand-icon { display: grid; place-items: center; background: #2863da; color: white; width: 23px; height: 23px; border-radius: 9px; margin-right: 7px; font-size: 16px; }

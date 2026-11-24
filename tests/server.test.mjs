@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Cache } from '../reader.mjs';
-import { createServer, Reader, currentWindowsIdentity } from '../server.mjs';
+import { createServer, Reader, currentWindowsIdentity, checkRelease } from '../server.mjs';
 import { ModelReadError } from '../direct-models.mjs';
 import { selection, diagram, item, snapshot } from './fixture.mjs';
 
@@ -28,6 +28,15 @@ async function setup(t, options = {}) {
   });
   return { reader, cache, server, base, post };
 }
+
+test('release notification only advertises newer stable versions, comparing numeric components', async () => {
+  const release = (tag_name, extra = {}) => async () => Response.json({tag_name, ...extra});
+  assert.equal(await checkRelease('1.9.2', release('v1.10.0')), '1.10.0');
+  assert.equal(await checkRelease('1.10.0', release('v1.9.9')), null);
+  assert.equal(await checkRelease('1.10.0', release('v1.10.0')), null);
+  assert.equal(await checkRelease('1.10.0', release('v2.0.0', {prerelease:true})), null);
+  await assert.rejects(checkRelease('1.0.0', async () => new Response(null,{status:403})), /403/);
+});
 
 test('missing-only retries preserve fresh entries and narrow the next retry after partial success', async t => {
   const keys = ['_Ent2_A','_Ent2_B','_Ent2_C'], modelId = '00010002000000ff';

@@ -14,6 +14,7 @@ try {
     foreach ($module in $modules) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot "$module.mjs") -Destination $app
     }
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'package.json') -Destination $app
     $web = New-Item -ItemType Directory -Path (Join-Path $app 'web')
     foreach ($asset in 'index.html','app.mjs','diagram.mjs','style.css','uml.mjs') {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot "web\$asset") -Destination $web.FullName

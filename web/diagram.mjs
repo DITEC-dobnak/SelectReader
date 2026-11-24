@@ -195,7 +195,7 @@ export class Diagram {
     this.svg.classList.toggle('select-sequence', data.uml?.kind === 'sequence');
     this.svg.classList.toggle('select-class', data.uml?.kind === 'class');
     if (data.uml) {
-      const rendered = renderUml(this.svg, data.uml, this.onOpen, { detailedSteps: true });
+      const rendered = renderUml(this.svg, data.uml, this.onOpen, { detailedSteps: true, symbols: data.symbols });
       const [left, top, docWidth, docHeight] = rendered.box;
       const leftGutter = 24;
       this.initial = [left - leftGutter, top, docWidth + leftGutter, docHeight];

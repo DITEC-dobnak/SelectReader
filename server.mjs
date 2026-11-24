@@ -252,6 +252,22 @@ async function body(request) {
   catch { throw Object.assign(new Error('Neplatný JSON.'), { status: 400 }); }
 }
 
+export async function checkRelease(currentVersion, fetchRelease = fetch) {
+  const response = await fetchRelease('https://api.github.com/repos/DITEC-dobnak/SelectReader/releases/latest', {
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'SelectReader' },
+    signal: AbortSignal.timeout(5000),
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`GitHub Releases: HTTP ${response.status}`);
+  const release = await response.json();
+  if (release.draft || release.prerelease) return null;
+  const latest = /^v?(\d+\.\d+\.\d+)$/.exec(release.tag_name)?.[1];
+  if (!latest || !/^\d+\.\d+\.\d+$/.test(currentVersion)) throw new Error('Neplatný formát verzie Readeru.');
+  const installed = currentVersion.split('.').map(Number);
+  const difference = latest.split('.').map((part, i) => Number(part) - installed[i]).find(delta => delta !== 0);
+  return difference > 0 ? latest : null;
+}
+
 export function createServer(reader, cache, {
   port = 4317, directList = listDatastores, prepareLogin = prepareAuthentication, checkLogin = verifyCredentials,
   identityProvider = currentWindowsIdentity, windowsConnect = authenticateWindowsShare, logger = console,
@@ -262,6 +278,7 @@ export function createServer(reader, cache, {
   onExit, idleMs = 15000, desktop = false, desktopIdleMs = 2000,
 } = {}) {
   const views = new Set();
+  let releaseCheck;
   let idleTimer, ending = false;
   const finish = command => {
     ending = true;
@@ -300,6 +317,11 @@ export function createServer(reader, cache, {
       const url = new URL(request.url, `http://127.0.0.1:${activePort}`);
       if (ending) return json(response, 503, {error:'Reader sa ukončuje.'});
       if (request.method === 'GET') {
+        if (url.pathname === '/api/update') {
+          releaseCheck ??= readFile(path.join(root, 'package.json'), 'utf8')
+            .then(text => checkRelease(JSON.parse(text).version));
+          return json(response, 200, { available: await releaseCheck });
+        }
         if (url.pathname === '/api/health') return json(response, 200, { app: 'select-architect-reader', version: 2, transport: 'direct-tcp' });
         if (url.pathname === '/api/state') {
           if (onExit && url.searchParams.has('view')) {
@@ -538,7 +560,7 @@ async function main() {
   function openWindow() {
     if (!desktop && !process.argv.includes('--open')) return;
     const url = 'http://127.0.0.1:4317';
-    const args = desktop ? [`--app=${url}`, '--no-first-run', '--no-default-browser-check',
+    const args = desktop ? [`--app=${url}`, '--start-maximized', '--no-first-run', '--no-default-browser-check',
       `--user-data-dir=${path.join(process.env.LOCALAPPDATA, 'SelectReader', 'Edge')}`] : [url];
     const child = spawn(edge || 'explorer.exe', args, { stdio: 'ignore', windowsHide: !desktop });
     child.on('error', error => {

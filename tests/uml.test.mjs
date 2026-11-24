@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { classDiagramData, sequenceDiagramData } from '../uml-data.mjs';
-import { classLayout, sequenceLayout } from '../web/uml.mjs';
+import { classLayout, renderUml, sequenceLayout } from '../web/uml.mjs';
 import { textMatches } from '../web/diagram.mjs';
 
 test('diagram search finds each visible occurrence case-insensitively and without accents', () => {
@@ -15,6 +15,30 @@ test('diagram search finds each visible occurrence case-insensitively and withou
 const item = (id, name, nativeClass) => ({ id, name, nativeClass, nativeId: id });
 const relation = (role, item) => ({ role, item });
 const data = (attributes = {}, relations = []) => ({ attributes, relations });
+
+test('a stored note link connects the note box to the referenced class symbol only', t => {
+  const svgNode = tag => ({ tag, attrs: {}, children: [], dataset: {},
+    append(child) { this.children.push(child); }, setAttribute(k, v) { this.attrs[k] = v; } });
+  t.after(() => { delete globalThis.document; });
+  globalThis.document = { createElementNS: (_, tag) => svgNode(tag),
+    createElement: () => ({ getContext: () => ({ measureText: s => ({ width: s.length * 8 }) }) }) };
+  const svg = svgNode('svg');
+  const uml = { kind: 'class', classes: ['A', 'B'].map(id => ({ id, name: id, attributes: [], operations: [] })),
+    edges: [], notes: [{ id: 'n', text: 'attached' }, { id: 'u', text: 'B' }] };
+  const link = (note, target) => ({ nativeClass: '_Ent2_NoteLink', relations: [
+    relation('_Ent2_NoteLink_To_Note', { id: note }), relation('_Ent2_AttachedNoteLink_To_Symbol', { id: target })] });
+  renderUml(svg, uml, null, { symbols: [link('n', 'B'), link('u', 'absent')] });
+  const connectors = svg.children.filter(n => n.tag === 'line' && n.attrs['stroke-dasharray']);
+  assert.equal(connectors.length, 1);
+  const line = connectors[0].attrs;
+  const cls = svg.children.find(n => n.attrs['aria-label'] === 'B').children[0].attrs;
+  const [attached, unbound] = svg.children.filter(n => n.tag === 'rect').map(n => n.attrs);
+  assert.equal(line.x1, cls.x + cls.width);
+  assert.equal(line.y1, cls.y + cls.height / 2);
+  assert.equal(line.x2, attached.x);
+  assert.equal(line.y2, attached.y + attached.height / 2);
+  assert.ok(unbound.y > attached.y + attached.height);
+});
 
 test('class UML reads members and both semantic association ends without a global association/role index', async () => {
   const a = item('class-a', 'Account', '_Ent2_Class'), b = item('class-b', 'Owner', '_Ent2_Class');
@@ -52,6 +76,20 @@ test('class UML reads members and both semantic association ends without a globa
   const layout = classLayout(result);
   assert.ok(layout.nodes.every(node => node.height > 100 && node.width >= 300));
   assert.ok(layout.width >= Math.max(...layout.nodes.map(node => node.x + node.width)));
+});
+
+test('stored CLD positions preserve the input/output branches and place SaSZ below the input', () => {
+  const positions = { AktualizaciaNadPrihlaskou: '855 48', SaSZ: '9 711', Vstup: '129 246', Vystup: '1623 240' };
+  const classes = Object.keys(positions).map(id => ({ id, name: id, attributes: [], operations: [] }));
+  const symbols = classes.map(({id}) => ({ id, fields: { Position: positions[id] } }));
+  const { nodes } = classLayout({classes}, undefined, symbols);
+  const [root, child, input, output] = classes.map(c => nodes.find(node => node.id === c.id));
+  assert.ok(root.y + root.height < input.y);
+  assert.equal(input.y, output.y);
+  assert.ok(input.x < root.x && root.x < output.x);
+  assert.ok(input.x + input.width < output.x);
+  assert.ok(child.y > input.y + input.height && child.x + child.width / 2 > input.x &&
+    child.x + child.width / 2 < input.x + input.width);
 });
 
 test('a repeated class costs no additional semantic reads and retains its local symbol', async () => {

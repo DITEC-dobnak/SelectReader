@@ -56,8 +56,13 @@ function lines(value, width = 48) {
   return result;
 }
 
-export function classLayout(data, measure = value => String(value).length * 9) {
+export function classLayout(data, measure = value => String(value).length * 9, symbols = []) {
   const nodes = [], groups = [];
+  const positions = new Map();
+  for (const symbol of symbols) {
+    const xy = symbol.fields?.Position?.trim().split(/\s+/).map(Number);
+    if (xy?.length === 2 && xy.every(Number.isFinite)) positions.set(symbol.id, xy);
+  }
   const namespaces = [...new Set(data.classes.map(item => item.namespace))].sort();
   const columnWidths = [340,340];
   const sections = namespaces.map(namespace => ({
@@ -76,17 +81,38 @@ export function classLayout(data, measure = value => String(value).length * 9) {
   let y = 55;
   for (const {namespace,members} of sections) {
     const top = y;
-    for (let start = 0; start < members.length; start += 2) {
-      const row = members.slice(start, start + 2);
+    const positioned = members.every(item => positions.has(item.id));
+    const rows = [];
+    let minX = 0;
+    if (positioned) {
+      minX = Math.min(...members.map(item => positions.get(item.id)[0]));
+      let rowY = -Infinity;
+      for (const item of [...members].sort((a,b) => positions.get(a.id)[1] - positions.get(b.id)[1])) {
+        const itemY = positions.get(item.id)[1];
+        // Slight native offsets are common even for classes on the same row.
+        if (itemY - rowY > 32) { rows.push([]); rowY = itemY; }
+        rows.at(-1).push(item);
+      }
+      for (const row of rows) row.sort((a,b) => positions.get(a.id)[0] - positions.get(b.id)[0]);
+    } else {
+      for (let start = 0; start < members.length; start += 2) rows.push(members.slice(start, start + 2));
+    }
+    let sectionRight = 0;
+    for (const row of rows) {
       let rowHeight = 0;
+      let nextX = 45;
       for (const [column, item] of row.entries()) {
         const height = 88 + Math.max(1, item.attributes.length) * 21 + Math.max(1, item.operations.length) * 21;
-        nodes.push({ ...item, x: 45 + column * (columnWidths[0]+100), y, width: columnWidths[column], height });
+        const width = positioned ? Math.max(...columnWidths) : columnWidths[column];
+        const x = positioned ? Math.max(nextX, 45 + (positions.get(item.id)[0] - minX) * .5) : nextX;
+        nodes.push({ ...item, x, y, width, height });
+        sectionRight = Math.max(sectionRight, x + width);
+        nextX = x + width + 100;
         rowHeight = Math.max(rowHeight, height);
       }
       y += rowHeight + 130;
     }
-    if (namespace) groups.push({ name: namespace, x: 20, y: top - 35, width: 50 + columnWidths[0] + (members.length>1 ? 100+columnWidths[1] : 0), height: y - top - 65 });
+    if (namespace) groups.push({ name: namespace, x: 20, y: top - 35, width: sectionRight + 5, height: y - top - 65 });
   }
   return { nodes, groups, width: Math.max(500, ...nodes.map(node => node.x + node.width + 90)), height: y + 40 };
 }
@@ -120,10 +146,10 @@ function memberLabel(member, operation, signature) {
   return `${member.name}${signature ? `(${member.parameters.join(', ')})${member.type ? `: ${member.type}` : ''}` : '()'}`;
 }
 
-function classDiagram(svg, data, onOpen) {
+function classDiagram(svg, data, onOpen, symbols) {
   const ctx = document.createElement('canvas').getContext('2d');
   const measure = (value,font) => { ctx.font=font; return ctx.measureText(value).width; };
-  const layout = classLayout(data,measure), missing = [], occupied = [];
+  const layout = classLayout(data,measure,symbols), missing = [], occupied = [];
   const defs = element('defs');
   for (const [id, path, fill] of [
     ['uml-inheritance', 'M 0 0 L 12 6 L 0 12 Z', '#fff'],
@@ -144,20 +170,24 @@ function classDiagram(svg, data, onOpen) {
       (!edge.symbolIds || edge.symbolIds.includes(node.id))));
     else ends = edge.symbolIds.map(id => layout.nodes.find(node => node.id === id));
     if (ends.length !== 2 || ends.some(end => !end)) { missing.push(edge.id); continue; }
-    const [a, b] = ends, right = b.x >= a.x, vertical = a.x === b.x, self = a.id === b.id;
-    const start = self ? [a.x + a.width, a.y + a.height / 3] : vertical ? [a.x + a.width / 2, a.y + (b.y > a.y ? a.height : 0)] : [a.x + (right ? a.width : 0), a.y + a.height / 2];
-    const finish = self ? [a.x + a.width, a.y + a.height * 2 / 3] : vertical ? [b.x + b.width / 2, b.y + (b.y > a.y ? 0 : b.height)] : [b.x + (right ? 0 : b.width), b.y + b.height / 2];
+    const [a, b] = ends, right = b.x >= a.x, vertical = a.y !== b.y, self = a.id === b.id;
+    const sharedX = (Math.max(a.x, b.x) + Math.min(a.x + a.width, b.x + b.width)) / 2;
+    const portX = node => Math.max(node.x + node.width / 4,
+      Math.min(node.x + node.width * .75, sharedX));
+    const start = self ? [a.x + a.width, a.y + a.height / 3] : vertical ? [portX(a), a.y + (b.y > a.y ? a.height : 0)] : [a.x + (right ? a.width : 0), a.y + a.height / 2];
+    const finish = self ? [a.x + a.width, a.y + a.height * 2 / 3] : vertical ? [portX(b), b.y + (b.y > a.y ? 0 : b.height)] : [b.x + (right ? 0 : b.width), b.y + b.height / 2];
     const mid = (start[0] + finish[0]) / 2;
+    const midY = (start[1] + finish[1]) / 2;
     const group = element('g', { class: 'symbol uml-association' });
     group.dataset.text = normalize([edge.label, ...(edge.ends ?? []).map(end => `${end.name} ${end.multiplicity}`)].join(' '));
     interactive(group, edge.target, onOpen);
     group.append(element('polyline', { points: (self ? [start, [start[0] + 70, start[1]], [finish[0] + 70, finish[1]], finish] :
-      vertical ? [start, finish] : [start, [mid, start[1]], [mid, finish[1]], finish]).map(point => point.join(',')).join(' '),
+      vertical ? [start, [start[0], midY], [finish[0], midY], finish] : [start, [mid, start[1]], [mid, finish[1]], finish]).map(point => point.join(',')).join(' '),
       fill: 'none', stroke: '#315b73', 'stroke-width': 1.5,
       ...(edge.type === 'dependency' ? { 'stroke-dasharray': '6 4', 'marker-end': 'url(#uml-dependency)' } :
         edge.type === 'generalization' ? { 'marker-end': 'url(#uml-inheritance)' } : {}) }));
     if (edge.label) {
-      const onVertical = self || start[1] !== finish[1];
+      const onVertical = self || (vertical ? start[0] === finish[0] : start[1] !== finish[1]);
       const x = (self ? start[0]+70 : mid) + (onVertical ? 8 : 0);
       let y = (start[1]+finish[1])/2 - (onVertical ? 0 : 7);
       const width = measure(edge.label,'14px Arial'), left = onVertical ? x : x-width/2;
@@ -173,6 +203,40 @@ function classDiagram(svg, data, onOpen) {
         { 'text-anchor': side>0 ? 'start' : 'end', 'font-size': 12 });
     }
     svg.append(group);
+  }
+  const nodesById = new Map(layout.nodes.map(node => [node.id, node]));
+  const noteTargets = new Map();
+  for (const symbol of symbols) {
+    if (symbol.nativeClass !== '_Ent2_NoteLink') continue;
+    const note = symbol.relations.find(r => r.role === '_Ent2_NoteLink_To_Note')?.item;
+    const target = symbol.relations.find(r => r.role === '_Ent2_AttachedNoteLink_To_Symbol')?.item;
+    const node = nodesById.get(target?.id);
+    if (!note || !node) continue;
+    if (!noteTargets.has(note.id)) noteTargets.set(note.id, new Set());
+    noteTargets.get(note.id).add(node);
+  }
+  const noteBoxes = [];
+  let nextY = 25, left = 0, right = layout.width;
+  const firstColumn = Math.min(...layout.nodes.map(node => node.x));
+  const centerY = node => node.y + node.height / 2;
+  const attached = data.notes.filter(note => noteTargets.has(note.id)).map(note => ({
+    note, nodes: [...noteTargets.get(note.id)],
+    preferredY: Math.min(...[...noteTargets.get(note.id)].map(centerY)),
+  })).sort((a, b) => a.preferredY - b.preferredY);
+  for (const { note, nodes, preferredY } of attached) {
+    const wrapped = lines(note.text, 48), height = wrapped.length * 20 + 30;
+    const y = Math.max(nextY, preferredY - height / 2);
+    const boxWidth = Math.max(100, ...wrapped.map(line => measure(line, '14px Arial') + 30));
+    const onLeft = nodes.every(node => node.x === firstColumn);
+    const x = onLeft ? -boxWidth - 25 : layout.width;
+    noteBoxes.push({ x, y, width: boxWidth, height, wrapped });
+    nextY = y + height + 25;
+    left = Math.min(left, x - 25);
+    right = Math.max(right, x + boxWidth + 25);
+    for (const node of nodes) svg.append(element('line', {
+      x1: node.x + (onLeft ? 0 : node.width), y1: centerY(node), x2: x + (onLeft ? boxWidth : 0), y2: y + height / 2,
+      stroke: '#738796', 'stroke-width': 1.5, 'stroke-dasharray': '6 4', 'pointer-events': 'none',
+    }));
   }
   for (const node of layout.nodes) {
     const group = element('g', { class: 'symbol uml-class', 'aria-label': node.name });
@@ -198,14 +262,18 @@ function classDiagram(svg, data, onOpen) {
     }
     svg.append(group);
   }
-  let y = layout.height;
+  let y = Math.max(layout.height, nextY);
   for (const note of data.notes) {
+    if (noteTargets.has(note.id)) continue;
     const wrapped = lines(note.text, 110);
-    svg.append(element('rect', { x: 25, y, width: layout.width - 50, height: wrapped.length * 20 + 30, fill: '#fffbe8', stroke: '#c4b878' }));
-    wrapped.forEach((line, index) => text(svg, line, 40, y + 24 + index * 20, { 'text-anchor': 'start' }));
+    noteBoxes.push({ x: 25, y, width: layout.width - 50, height: wrapped.length * 20 + 30, wrapped });
     y += wrapped.length * 20 + 55;
   }
-  return { box: [0, 0, layout.width, y + 20],
+  for (const { x, y, width, height, wrapped } of noteBoxes) {
+    svg.append(element('rect', { x, y, width, height, fill: '#fffbe8', stroke: '#c4b878' }));
+    wrapped.forEach((line, index) => text(svg, line, x + 15, y + 24 + index * 20, { 'text-anchor': 'start' }));
+  }
+  return { box: [left, 0, right - left, y + 20],
     notice: `${data.classes.length} tried · ${data.edges.length} vzťahov · atribúty, operácie, roly a kardinality čítané priamo z diagramu.${missing.length ? ` ${missing.length} spojení nemá zobrazené oba konce.` : ''}` };
 }
 
@@ -292,7 +360,7 @@ function sequenceDiagram(svg, data, onOpen, options) {
 }
 
 export function renderUml(svg, data, onOpen, options = {}) {
-  if (data.kind === 'class') return classDiagram(svg, data, onOpen);
+  if (data.kind === 'class') return classDiagram(svg, data, onOpen, options.symbols ?? []);
   if (data.kind === 'sequence') return sequenceDiagram(svg, data, onOpen, options);
   throw new Error('Unsupported UML diagram representation.');
 }
