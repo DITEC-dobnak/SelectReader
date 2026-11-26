@@ -6,6 +6,36 @@ import path from 'node:path';
 import { Cache, identity, normalize, search, validateId, validateSelection } from '../reader.mjs';
 import { Diagram, geometry, numbers } from '../web/diagram.mjs';
 
+test('background drag pans by default, Shift selects rows, and text keeps native selection', t => {
+  const handlers = new Map(), rect = {left:0,top:0,right:100,bottom:100,width:100,height:100};
+  const svg = { setAttribute(){}, classList:{toggle(){},add(){},remove(){}}, closest:()=>null,
+    setPointerCapture(){}, getBoundingClientRect:()=>rect, querySelectorAll:()=>[],
+    addEventListener:(name,handler)=>handlers.set(name,handler) };
+  const frame = {style:{},remove(){}};
+  const doc = {createElementNS:()=>svg,createElement:()=>frame,getSelection:()=>({removeAllRanges(){}})};
+  globalThis.document = doc;
+  globalThis.ResizeObserver = class {observe(){}};
+  t.after(()=>{delete globalThis.document; delete globalThis.ResizeObserver;});
+  const frames = [];
+  const view = new Diagram({closest:()=>null,replaceChildren(){},addEventListener(){},focus(){},append:f=>frames.push(f)});
+  view.box=[40,40,100,100];
+  view.update=()=>{};
+  const press = {pointerId:1,isPrimary:true,button:0,clientX:10,clientY:10,target:svg,preventDefault(){}};
+  const move = {...press,clientX:30,clientY:20};
+  handlers.get('pointerdown')(press);
+  handlers.get('pointermove')({...move,shiftKey:true});
+  handlers.get('pointerup')(move);
+  assert.deepEqual(view.box,[20,30,100,100]);
+  handlers.get('pointerdown')({...press,shiftKey:true});
+  handlers.get('pointermove')(move);
+  handlers.get('pointerup')(move);
+  assert.deepEqual(frames,[frame]);
+  assert.deepEqual(view.box,[20,30,100,100]);
+  handlers.get('pointerdown')({...press,target:{closest:()=>true},preventDefault:assert.fail});
+  handlers.get('pointermove')(move);
+  assert.deepEqual(view.box,[20,30,100,100]);
+});
+
 test('SQD and CLD scrolling stops at document edges, accounting for the visible SVG area', () => {
   for (const kind of ['sequence', 'class']) {
     const diagram = { data: { uml: { kind } }, initial: [0, 0, 960, 2000],
@@ -44,6 +74,13 @@ test('search ignores case/accents and matches all words across names, paths and 
   assert.equal(search(entries, details, { kind: 'dictionary', type: 'Class' }).total, 1);
   assert.equal(search(entries, details, { query: 'neexistuje' }).total, 0);
   assert.equal(search(entries, details, { offset: 1, limit: 1 }).items.length, 1);
+});
+
+test('a compact query finds adjacent words in a diagram name without joining separate fields', () => {
+  const diagram = { id: 'd', name: 'Pr2 Portál WS Rozhodnutie Export rozhodnutí', type: 'Class Diagram' };
+  const other = { ...diagram, id: 'e', name: 'Export', path: 'Rozhodnutí' };
+  const entries = new Map([[diagram.id, diagram], [other.id, other]]);
+  assert.deepEqual(search(entries, new Map(), { kind: 'diagrams', query: 'exportrozhodnuti' }).items, [diagram]);
 });
 
 test('selection identity isolates server, repository and model and prevents invalid inputs', () => {

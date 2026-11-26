@@ -72,6 +72,22 @@ test('a stored note link connects the note box to the referenced class symbol on
   assert.ok(unbound.y > attached.y + attached.height);
 });
 
+test('an association class joins the referenced route, not either class endpoint', t => {
+  const svg = mockSvg(t);
+  const classes = ['A','B','History'].map(id=>({id,name:id,attributes:[],operations:[]}));
+  const symbols = classes.map(({id},i)=>({id,fields:{Position:['0 0','1200 0','600 500'][i],Width:'600',Height:'300'}}));
+  symbols.push({id:'link',nativeClass:'_Ent2_CDAssociationLink',relations:[
+    relation('_Ent2_CDAssociationLink_To_CDAssociation',{id:'ab'}),relation('_Ent2_CDAssociationLink_To_CDClass',{id:'History'})]});
+  renderUml(svg,{kind:'class',classes,edges:[{id:'ab',type:'association',symbolIds:['A','B']}],notes:[]},null,{symbols});
+  const group = svg.children.find(g=>g.attrs.class==='symbol uml-association');
+  const [main,branch] = group.children.filter(p=>p.attrs.class==='association-line');
+  const coords = p=>p.attrs.d.match(/-?[\d.]+/g).map(Number);
+  const [x,y,X,Y] = coords(main), [startX,startY,endX,endY] = coords(branch);
+  const box = svg.children.find(g=>g.attrs['aria-label']==='History').children[0].attrs;
+  assert.ok(branch.attrs['stroke-dasharray'] && y===Y && endY===y && x<endX && endX<X);
+  assert.ok(startY===box.y && startX>=box.x && startX<=box.x+box.width);
+});
+
 test('class routes bypass intervening boxes and avoid a previously drawn crossing when possible', () => {
   const box = x => ({x,y:60,width:80,height:60});
   const a = box(20), b = box(340), obstacle = box(180);
@@ -123,6 +139,106 @@ test('class UML reads members and both semantic association ends without a globa
   const layout = classLayout(result);
   assert.ok(layout.nodes.every(node => node.height > 100 && node.width >= 300));
   assert.ok(layout.width >= Math.max(...layout.nodes.map(node => node.x + node.width)));
+});
+
+test('a long operation on a plain class does not stretch its children or their spacing', () => {
+  const classes = ['parent','left','right'].map(id=>({id,name:id,attributes:[],operations:[]}));
+  const edges = ['left','right'].map(id=>({symbolIds:['parent',id]}));
+  const layout = () => classLayout({classes,edges}).nodes;
+  const [before,first,last] = layout();
+  classes[0].signature = true;
+  classes[0].operations.push({name:'submit',parameters:['parameter'.repeat(35)]});
+  const [parent,left,right] = layout();
+  assert.ok(parent.width > before.width * 2);
+  assert.equal(left.width,first.width);
+  assert.equal(right.width,last.width);
+  assert.equal(right.x-left.x,last.x-first.x);
+  assert.equal(parent.x+parent.width/2,(left.x+right.x+right.width)/2);
+});
+
+test('wrapped members preserve the complete label and target, with indented continuations inside the box', t => {
+  const svg = mockSvg(t), name = 'LongIdentifier'.repeat(20), parameters = Array(30).fill('Some parameter');
+  const classes = [{id:'c',name:'C',signature:true, attributes:[{name,target:{id:'a'}},{name:'Short'}],
+    operations:[{name:'submit',parameters,target:{id:'op'}}]}];
+  const symbols = [{id:'c',fields:{Position:'100 100',Width:'600',Height:'300',
+    ViewPublicAttributes:'false',ViewPrivateAttributes:'false',ViewProtectedAttributes:'false',ViewPackagedAttributes:'false',
+    ViewPublicOperations:'false',ViewPrivateOperations:'false',ViewProtectedOperations:'false',ViewPackagedOperations:'false'}}];
+  renderUml(svg,{kind:'class',classes,edges:[],notes:[]},null,{symbols});
+  const group = svg.children.find(g=>g.attrs.class==='symbol uml-class');
+  const box = group.children.find(c=>c.tag==='rect').attrs;
+  for (const [id,expected] of [['a',name],['op',`submit(${parameters.join(', ')})`]]) {
+    const label = group.children.find(c=>c.dataset.target===id);
+    const spans = label.children;
+    assert.ok(spans.length > 1);
+    assert.equal(spans.map(s=>s.textContent).join(''),expected);
+    for (const [i,s] of spans.entries()) {
+      assert.ok(!i || s.attrs.x > spans[0].attrs.x && s.attrs.y > spans[i-1].attrs.y);
+      assert.ok(s.attrs.x + s.textContent.length*8 < box.x+box.width && s.attrs.y < box.y+box.height);
+    }
+  }
+  assert.ok(box.width < name.length*8 / 2);
+  const short = group.children.find(c=>c.textContent==='Short').attrs;
+  const first = group.children.find(c=>c.dataset.target==='a').children;
+  assert.equal(short.x,first[0].attrs.x);
+  assert.ok(short.y > first.at(-1).attrs.y);
+});
+
+test('toggling operations reflows the class and restores the full signature without reloading data', t => {
+  const uml = {kind:'class',classes:[{id:'a',name:'A',signature:true,attributes:[{name:'field'}],
+    operations:[{name:'submit',parameters:['text']}]}],edges:[],notes:[]};
+  const draw = showOperations => {
+    const svg = mockSvg(t);
+    renderUml(svg,uml,null,{showOperations});
+    return svg.children.find(c=>c.attrs.class==='symbol uml-class').children;
+  };
+  const visible = draw(true), hidden = draw(false);
+  assert.ok(hidden.some(c=>c.textContent==='field') && !hidden.some(c=>c.textContent==='submit(text)'));
+  assert.ok(hidden[0].attrs.height < visible[0].attrs.height || hidden.filter(c=>c.tag==='line').length < visible.filter(c=>c.tag==='line').length);
+  assert.ok(draw(true).some(c=>c.textContent==='submit(text)'));
+});
+
+test('a native CLD keeps a side branch horizontal and a lower branch vertical', t => {
+  const svg = mockSvg(t);
+  const classes = ['center','right','bottom'].map(id=>({id,name:id,attributes:[{name:'field',optional:true}],
+    operations:[{name:'hidden',parameters:[]}]}));
+  const symbols = classes.map(({id},i)=>({id,fields:{Position:['0 0','1000 40','0 800'][i],Width:'600',Height:'300',
+    ViewPublicOperations:'false',ViewPrivateOperations:'false',ViewProtectedOperations:'false',ViewPackagedOperations:'false'}}));
+  const edges = ['right','bottom'].map(id=>({symbolIds:['center',id]}));
+  renderUml(svg,{kind:'class',classes,edges,notes:[]},null,{symbols});
+  const paths = svg.children.filter(g=>g.attrs.class==='symbol uml-association')
+    .map(g=>g.children.find(p=>p.attrs.class==='association-line').attrs.d.match(/-?[\d.]+/g).map(Number));
+  const [[x,y,X,Y],[a,b,A,B]] = paths;
+  assert.ok(paths.every(p=>p.length===4));
+  assert.ok(X>x && y===Y && b<B && a===A);
+  const labels = svg.children.filter(g=>g.attrs.class==='symbol uml-class').flatMap(g=>g.children.map(c=>c.textContent));
+  assert.ok(labels.includes('field {optional}') && labels.includes('hidden()'));
+});
+
+test('a tall native class only displaces its neighbors, not the row spacing in another column', () => {
+  const classes = ['a','b','tall','below'].map(id=>({id,name:id,attributes:[],operations:[]}));
+  const symbols = classes.map(({id},i)=>({id,fields:{Position:['0 0','0 500','1800 0','1800 500'][i],Width:'600',Height:'300'}}));
+  const layout = () => classLayout({classes},undefined,symbols);
+  const compact = layout();
+  classes[2].operations = Array.from({length:35},()=>({name:'long operation name '.repeat(12),parameters:[]}));
+  const expanded = layout();
+  assert.ok(expanded.project);
+  const [a,b,tall,below] = expanded.nodes;
+  assert.equal(b.y-a.y,compact.nodes[1].y-compact.nodes[0].y);
+  assert.ok(tall.memberRows.operations.every(rows=>rows.length>1));
+  assert.ok(below.y >= tall.y+tall.height && below.y < tall.y+tall.height+100);
+  assert.ok(expanded.height < tall.height+300);
+});
+
+test('SA draws the opposite stored multiplicity at each class without exchanging role names', t => {
+  const svg = mockSvg(t);
+  const classes = ['Príjemca platby','Podanie'].map(id=>({id,name:id,target:{id},attributes:[],operations:[]}));
+  const symbols = classes.map(({id},i)=>({id,fields:{Position:`0 ${i*500}`,Width:'600',Height:'300'}}));
+  const ends = classes.map(({id},i)=>({classId:id,end:i,name:['recipient','submission'][i],multiplicity:['*','1'][i]}));
+  renderUml(svg,{kind:'class',classes,edges:[{type:'association',ends}],notes:[]},null,{symbols});
+  const group = svg.children.find(g=>g.attrs.class==='symbol uml-association');
+  const labels = group.children.filter(n=>n.tag==='text').sort((a,b)=>a.attrs.y-b.attrs.y);
+  assert.deepEqual(labels.map(n=>n.textContent),['recipient 1','submission *']);
+  assert.match(group.children.find(n=>n.tag==='title').textContent,/Príjemca platby \(recipient 1\) → Podanie \(submission \*\)/);
 });
 
 test('stored CLD positions preserve the input/output branches and place SaSZ below the input', () => {
@@ -200,6 +316,46 @@ test('sibling boxes and parallel tracks follow numeric association names before 
   assert.deepEqual(nodes.slice(1).sort((a,b)=>a.x-b.x).map(n=>n.id),['D','C','B','A']);
   assert.deepEqual([...fanRoutes].sort((a,b)=>a[1][0][0]-b[1][0][0]).map(([e])=>e.label),
     ['01','2','03','10','Aggregates']);
+});
+
+test('decision export draws the six numbered Vstup exits in order below its native frame', t => {
+  const svg = mockSvg(t);
+  const children = ['Stav','Oznacenie','SuladVociRFO','SposobPodania','NemaMatOznacenie','Prihlasky'];
+  const classes = ['ExportRozhodnuti','Vstup','Vystup','Udaje',...children].map(id=>({id,name:id,attributes:[],operations:[]}));
+  const positions = ['800 0','600 400','1800 400','1800 800','0 1000','150 1400','400 1750','600 2100','1300 2100','1800 1200'];
+  const symbols = classes.map(({id},i)=>({id,fields:{Position:positions[i],Width:'500',Height:'260'}}));
+  const edge = (from,to,label) => ({symbolIds:[from,to],label});
+  const edges = [edge('ExportRozhodnuti','Vstup','1'),edge('ExportRozhodnuti','Vystup','2'),edge('Vystup','Udaje',''),
+    ...[1,3,4,2,6,5].map(n=>edge('Vstup',children[n-1],String(n)))];
+  renderUml(svg,{kind:'class',classes,edges,notes:[]},null,{symbols});
+  const box = svg.children.find(g=>g.attrs['aria-label']==='Vstup').children[0].attrs;
+  let previousX = box.x;
+  let previousChild;
+  children.forEach((child,i)=>{
+    const frame = svg.children.find(g=>g.attrs['aria-label']===child).children[0].attrs;
+    if (previousChild) {
+      const gap = frame.x-previousChild.x-previousChild.width;
+      assert.ok(gap>0 && gap<frame.width/2);
+    }
+    previousChild=frame;
+    const group = svg.children.find(g=>g.attrs['aria-label']===`Vstup → ${i+1} → ${child}`);
+    const [x,y,nextX,nextY] = group.children.find(p=>p.attrs.class==='association-hit').attrs.d.match(/-?[\d.]+/g).map(Number);
+    assert.ok(previousX < x && x < box.x+box.width);
+    assert.equal(y,box.y+box.height);
+    assert.ok(nextX===x && nextY>y);
+    previousX=x;
+  });
+});
+
+test('ten unlabeled child links widen only the parent and use distinct exits', () => {
+  const classes = Array.from({length:11},(_,i)=>({id:String(i),name:`C${i}`,attributes:[],operations:[]}));
+  const edges = classes.slice(1).map(child=>({symbolIds:['0',child.id]}));
+  const {nodes,fanRoutes} = classLayout({classes,edges});
+  const [parent,...children] = nodes;
+  const plainWidth = classLayout({classes:[classes[0]]}).nodes[0].width;
+  assert.ok(parent.width > plainWidth);
+  assert.ok(children.every(child=>child.width === plainWidth));
+  assert.equal(new Set(edges.map(edge=>fanRoutes.get(edge)[0][0])).size,10);
 });
 
 test('wide branches leave enough space for each actual source multiplicity', () => {

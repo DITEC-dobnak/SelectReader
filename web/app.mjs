@@ -1468,13 +1468,6 @@ function toggleFavorite(id) {
 }
 $('favorite').addEventListener('click', handle(async () => toggleFavorite(selectedId)));
 $('zoom-in').addEventListener('click', () => diagram.zoom(1 / 1.25));
-$('cursor-switch').addEventListener('click', ({currentTarget: toggle}) => {
-  const hand = toggle.getAttribute('aria-checked') !== 'true';
-  diagram.setHand(hand);
-  extraPanes.forEach(pane=>pane.view.setHand(hand));
-  toggle.setAttribute('aria-checked', String(hand));
-  toggle.title = hand ? 'Posúvanie rukou · prepnúť na výber textu' : 'Výber textu · prepnúť na posúvanie rukou';
-});
 $('zoom-out').addEventListener('click', () => diagram.zoom(1.25));
 $('fit').addEventListener('click', () => diagram.fit());
 function updateDiagramSearch(view, input, matches) {
@@ -1483,6 +1476,22 @@ function updateDiagramSearch(view, input, matches) {
   for (const button of input.closest('.diagram-toolbar').querySelectorAll('[data-search-direction]')) button.disabled = !count;
 }
 function setupDiagramSearch(view, input, matches) {
+  const toggle = input.closest('.diagram-toolbar').querySelector('.operations-toggle');
+  const checkbox = toggle.querySelector('input');
+  const operationsKey = 'select-reader:show-operations';
+  view.container.addEventListener('diagramrender', () => {
+    toggle.hidden = view.data?.uml?.kind !== 'class';
+    if (!toggle.hidden) {
+      checkbox.checked = localStorage.getItem(operationsKey) !== 'false';
+      view.showOperations = checkbox.checked;
+    }
+  });
+  checkbox.addEventListener('change', () => {
+    if (view.data?.uml?.kind !== 'class') return;
+    localStorage.setItem(operationsKey,String(checkbox.checked));
+    view.render(view.data);
+    updateDiagramSearch(view,input,matches);
+  });
   const move = direction => {
     const result = view.nextMatch(direction);
     if (result) matches.textContent = `${result.index} / ${result.total}`;

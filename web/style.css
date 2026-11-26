@@ -41,6 +41,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .diagram svg [fill="#f2f7fa"] { fill: #1d2b39; }
   .diagram svg [fill="#fffbe8"] { fill: #403925; }
   .diagram svg [fill="#00df00"] { fill: #19513d; }
+  .diagram svg [fill="#00d6dc"] { fill: #12535a; }
   .diagram svg [fill="#0000c0"] { fill: #304e92; }
   .diagram svg .symbol.match > rect { fill: #655019; stroke: #efd07a; }
   .diagram svg .symbol:hover .shape { fill: #344a65; }
@@ -179,17 +180,14 @@ dialog::backdrop { background: #15284065; backdrop-filter: blur(3px); }
 #recent-models button { text-align: left; }
 .diagram-toolbar { display: flex; align-items: center; gap: 7px; padding: 15px 20px; background: #fff; flex-wrap: wrap; }
 .diagram-toolbar input { border: 1px solid var(--border); border-radius: 6px; padding: 8px; width: 200px; }
+.diagram-toolbar .operations-toggle { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.diagram-toolbar .operations-toggle input { width: auto; }
 .diagram-notice { color: #8896aa; padding: 7px 20px; font-size: 10px; background: #f8fafd; }
 .diagram-notice:empty { display: none; }
 .diagram { height: max(450px, calc(100vh - 410px)); background-color: #f9fbfe; background-image: radial-gradient(#dce4f1 1px, transparent 1px); background-size: 20px 20px; touch-action: none; cursor: grab; }
-.diagram svg { width: 100%; height: 100%; display: block; cursor: default; }
+.diagram svg { width: 100%; height: 100%; display: block; cursor: grab; }
 .diagram svg.panning, .diagram svg.panning * { cursor: grabbing; }
-#cursor-switch { display: inline-flex; align-items: center; padding: 2px; border-radius: 20px; background: #42526a; }
-#cursor-switch svg { display: block; flex: none; width: 22px; height: 22px; padding: 2px; border-radius: 50%; fill: white; }
-#cursor-switch[aria-checked=false] svg:first-child, #cursor-switch[aria-checked=true] svg:last-child { background: #2863da; }
 .diagram { position: relative; overflow: hidden; }
-.diagram .hand-tool, .diagram .hand-tool * { cursor: grab; user-select: none; }
-.diagram .hand-tool.panning, .diagram .hand-tool.panning * { cursor: grabbing; }
 .text-marquee { position: absolute; pointer-events: none; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
 .diagram svg rect.label-selection-bg { fill: #245cce; stroke: none; pointer-events: none; }
 .diagram svg rect.diagram-search-hit { fill: #ffdb43; stroke: #916100; stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
@@ -293,6 +291,9 @@ body:is(:has(#detail:not([hidden]) #diagram-panel:not([hidden])),:has(#diagram-p
   }
 }
 .diagram .select-class text { font-family: Arial, sans-serif; fill: #111; }
+.diagram .association-hit { stroke: transparent; stroke-width: 9; vector-effect: non-scaling-stroke; pointer-events: stroke; }
+.diagram svg.select-class .uml-association.traced .association-line { stroke: var(--accent); stroke-width: 3; vector-effect: non-scaling-stroke; }
+.diagram svg.select-class .uml-association.traced text { fill: var(--accent); }
 .diagram .select-class .interface-class text { fill: white; }
 .diagram .select-class .interface-class line { stroke: white; }
 .diagram [data-diagram-link] { pointer-events: bounding-box; }

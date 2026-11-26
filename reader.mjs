@@ -23,6 +23,7 @@ export function searchable(entry, detail) {
   const cached = textIndex.get(entry);
   if (cached && cached.detail === detail) return cached.text;
   const text = normalize([entry.name, entry.path, entry.type,
+    ...(isDiagram(entry.type) ? [entry.name.replace(/\s+/g, '')] : []),
     ...Object.values(detail?.attributes ?? {}),
   ].join('\n'));
   textIndex.set(entry, { detail, text });

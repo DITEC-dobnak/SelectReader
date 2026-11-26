@@ -73,7 +73,7 @@ export class Diagram {
       event.preventDefault();
     });
     container.addEventListener('keydown', event => {
-      if (event.key === 'Escape') this.clearLabels();
+      if (event.key === 'Escape') { this.clearLabels(); this.traceAssociation(null); }
     });
     new ResizeObserver(() => { if (this.box) this.update(); }).observe(this.svg);
     this.svg.addEventListener('wheel', event => {
@@ -102,11 +102,12 @@ export class Diagram {
       if (!event.isPrimary || event.button !== 0 || !this.box) return;
       panned = false;
       this.clearLabels();
-      if (!this.hand && event.target.closest('text')) return;
+      if (event.target.closest('text')) return;
       event.preventDefault();
       container.focus({preventScroll:true});
       document.getSelection().removeAllRanges();
-      drag = { x: event.clientX, y: event.clientY, box: [...this.box], id: event.pointerId };
+      drag = { x: event.clientX, y: event.clientY, box: [...this.box], id: event.pointerId,
+        pan: !event.shiftKey };
       event.target.setPointerCapture(event.pointerId);
     });
     this.svg.addEventListener('pointermove', event => {
@@ -116,7 +117,7 @@ export class Diagram {
       const x = event.clientX - drag.x, y = event.clientY - drag.y;
       if (!panned && Math.abs(x) + Math.abs(y) <= 5) return;
       panned = true;
-      if (!this.hand) {
+      if (!drag.pan) {
         const left = Math.min(drag.x,event.clientX), top = Math.min(drag.y,event.clientY);
         const right = Math.max(drag.x,event.clientX), bottom = Math.max(drag.y,event.clientY);
         if (!drag.frame) {
@@ -144,8 +145,14 @@ export class Diagram {
     this.svg.addEventListener('lostpointercapture', endDrag);
     this.svg.addEventListener('pointerup', endDrag);
     this.svg.addEventListener('pointercancel', endDrag);
+    this.svg.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      const edge = event.target.closest('.uml-association');
+      if (edge) { event.preventDefault(); this.traceAssociation(edge); }
+    }, true);
     this.svg.addEventListener('click', event => {
-      if (this.hand || panned || event.button !== 0 || (event.target.closest('text') && !document.getSelection().isCollapsed)) return;
+      if (panned || event.button !== 0 || (event.target.closest('text') && !document.getSelection().isCollapsed)) return;
+      this.traceAssociation(event.target.closest('.uml-association'));
       const target = event.target.closest('[data-target]');
       if (!target) return;
       if (['sequence', 'class'].includes(this.data?.uml?.kind) && event.detail && event.target.closest('text')) {
@@ -155,6 +162,12 @@ export class Diagram {
         }, 500);
       } else this.onOpen(target.dataset.target, target.dataset.diagramLink);
     });
+  }
+  traceAssociation(edge) {
+    if (edge === this.tracedEdge) return;
+    this.tracedEdge?.classList.remove('traced');
+    edge?.classList.add('traced');
+    this.tracedEdge = edge;
   }
   clearLabels() {
     this.selectLabels([]);
@@ -178,24 +191,20 @@ export class Diagram {
     }
     this.selectedLabels = labels;
   }
-  setHand(active) {
-    clearTimeout(this.pendingTextClick);
-    this.clearLabels();
-    this.hand = active;
-    this.svg.classList.toggle('hand-tool', active);
-  }
   render(data) {
     clearTimeout(this.pendingTextClick);
+    this.traceAssociation(null);
     this.clearLabels();
     this.matches = [];
     this.matchIndex = -1;
     this.data = data;
+    this.container.dispatchEvent(new Event('diagramrender'));
     this.svg.replaceChildren();
     this.svg.setAttribute('preserveAspectRatio', data.uml ? 'xMinYMin meet' : 'xMidYMid meet');
     this.svg.classList.toggle('select-sequence', data.uml?.kind === 'sequence');
     this.svg.classList.toggle('select-class', data.uml?.kind === 'class');
     if (data.uml) {
-      const rendered = renderUml(this.svg, data.uml, this.onOpen, { detailedSteps: true, symbols: data.symbols });
+      const rendered = renderUml(this.svg, data.uml, this.onOpen, { detailedSteps: true, symbols: data.symbols, showOperations: this.showOperations });
       const [left, top, docWidth, docHeight] = rendered.box;
       const leftGutter = 24;
       this.initial = [left - leftGutter, top, docWidth + leftGutter, docHeight];
@@ -318,39 +327,48 @@ export class Diagram {
     if (!normalized(query).trim()) return 0;
     for (const text of this.svg.querySelectorAll('text')) {
       const count = text.getNumberOfChars();
-      let offset = 0;
-      const ranges = [];
+      let offset = 0, fullText = '';
+      const ranges = [], breaks = [];
       for (const node of text.childNodes) {
         if (node.nodeType !== Node.TEXT_NODE && node.nodeName.toLowerCase() !== 'tspan') continue;
         const content = node.textContent;
-        for (const [start, end] of textMatches(content, query)) ranges.push([start + offset, end + offset]);
+        if (text.dataset.wrapped) fullText += content;
+        else for (const [start, end] of textMatches(content, query)) ranges.push([start + offset, end + offset]);
         offset += content.length;
+        breaks.push(offset);
       }
+      if (text.dataset.wrapped) ranges.push(...textMatches(fullText,query));
       if (!ranges.length) continue;
       const color = getComputedStyle(text).fill.match(/[\d.]+/g)?.slice(0, 3).map(Number);
       const lightText = color?.length === 3 && (color[0] * .2126 + color[1] * .7152 + color[2] * .0722) > 160;
-      for (const [start, end] of ranges) {
-        if (end >= count) continue;
-        const first = text.getExtentOfChar(start), last = text.getExtentOfChar(end);
-        const x = Math.min(first.x, last.x), y = Math.min(first.y, last.y);
-        const right = Math.max(first.x + first.width, last.x + last.width);
-        const bottom = Math.max(first.y + first.height, last.y + last.height);
-        const rect = svgElement('rect', { x: x - 1, y: y - 1, width: right - x + 2, height: bottom - y + 2,
-          class: `diagram-search-hit${lightText ? ' light-text' : ''}`, 'aria-hidden': 'true' });
-        if (text.hasAttribute('transform')) rect.setAttribute('transform', text.getAttribute('transform'));
-        text.before(rect);
-        this.matches.push(rect);
+      for (const [from, to] of ranges) {
+        if (to >= count) continue;
+        const parts = [];
+        let start = from;
+        for (const stop of [...breaks.filter(b => b > from && b <= to), to+1]) {
+          const first = text.getExtentOfChar(start), last = text.getExtentOfChar(stop-1);
+          const x = Math.min(first.x, last.x), y = Math.min(first.y, last.y);
+          const right = Math.max(first.x + first.width, last.x + last.width);
+          const bottom = Math.max(first.y + first.height, last.y + last.height);
+          const rect = svgElement('rect', { x: x - 1, y: y - 1, width: right - x + 2, height: bottom - y + 2,
+            class: `diagram-search-hit${lightText ? ' light-text' : ''}`, 'aria-hidden': 'true' });
+          if (text.hasAttribute('transform')) rect.setAttribute('transform', text.getAttribute('transform'));
+          text.before(rect);
+          parts.push(rect);
+          start = stop;
+        }
+        this.matches.push(parts);
       }
     }
     return this.matches.length;
   }
   nextMatch(direction) {
     if (!this.matches?.length || !this.box) return null;
-    if (this.matchIndex >= 0) this.matches[this.matchIndex].classList.remove('current');
+    if (this.matchIndex >= 0) this.matches[this.matchIndex].forEach(rect=>rect.classList.remove('current'));
     this.matchIndex = this.matchIndex < 0 ? (direction < 0 ? this.matches.length - 1 : 0)
       : (this.matchIndex + direction + this.matches.length) % this.matches.length;
-    const match = this.matches[this.matchIndex];
-    match.classList.add('current');
+    const parts = this.matches[this.matchIndex], match = parts[0];
+    parts.forEach(rect=>rect.classList.add('current'));
     const bounds = this.svg.getBoundingClientRect(), hit = match.getBoundingClientRect();
     const divider = this.inspectorDivider?.getBoundingClientRect();
     const bottom = this.container?.parentElement?.dataset.dock === 'bottom';

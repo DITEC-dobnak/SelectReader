@@ -68,7 +68,7 @@ export async function classDiagramData(symbols, read, orderedItems, classCache, 
       }
       const pkg = relationItems(data, '_Ent2_Class_To_Namespace')[0];
       const definition = { attributes, operations,
-        stereotype: exportMode && data.attributes.Stereotype === '0' ? 'business' : classStereotype(data.attributes.Stereotype),
+        stereotype: data.attributes.Stereotype === '0' ? 'business' : classStereotype(data.attributes.Stereotype),
         custom: relationItems(data, '_Ent2_UserStereotypedItem_To_UserStereotype').map(item => item.name),
         description: data.attributes.Description,
         namespace: exportMode && pkg?.nativeClass === '_Ent2_Package' ? await packagePath(pkg, orderedItems) : pkg?.name ?? '',

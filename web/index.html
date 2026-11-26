@@ -13,10 +13,7 @@
     <a class="brand" href="/" aria-label="Select Reader domov"><span class="brand-icon">S</span> Select<span>Reader</span></a>
     <span id="app-version" class="app-version" title="Aktuálna verzia programu">v—</span>
     <span class="top-spacer"></span>
-    <button type="button" id="cursor-switch" role="switch" aria-checked="false" aria-label="Režim ruky" title="Výber textu · prepnúť na posúvanie rukou">
-      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 3l14 11-7 1-3 7z"/></svg>
-      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 12V6a1.5 1.5 0 0 1 3 0v5-7a1.5 1.5 0 0 1 3 0v7-6a1.5 1.5 0 0 1 3 0v7-4a1.5 1.5 0 0 1 3 0v7c0 4-2 7-6 7h-1c-2 0-4-1-5-3l-4-6a1.5 1.5 0 0 1 2-2l2 2z"/></svg>
-    </button>
+    <span title="Ťahaním pozadia posunieš diagram. Ťahaním po texte ho označíš."><kbd>Shift</kbd> + ťahanie z pozadia: výber riadkov</span>
     <details id="layout-settings"><summary aria-label="Rozloženie diagramov" title="Rozloženie diagramov">
       <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M12 4v16"/></svg>
     </summary>
@@ -88,6 +85,7 @@
             <button type="button" data-search-direction="-1" aria-label="Predchádzajúca zhoda" title="Predchádzajúca zhoda (Shift+Enter)" disabled>↑</button>
             <button type="button" data-search-direction="1" aria-label="Nasledujúca zhoda" title="Nasledujúca zhoda (Enter)" disabled>↓</button>
             <span class="top-spacer"></span>
+            <label class="operations-toggle" hidden><input type="checkbox" checked> Zobraziť operácie</label>
             <button id="zoom-out" aria-label="Oddialiť" title="Oddialiť (Ctrl −)">−</button><button id="zoom-in" aria-label="Priblížiť" title="Priblížiť (Ctrl +)">+</button><button id="fit">Celý diagram</button>
           </div>
           <div id="diagram-notice" class="diagram-notice"></div>
@@ -120,6 +118,7 @@
           <button type="button" data-search-direction="-1" aria-label="Predchádzajúca zhoda" title="Predchádzajúca zhoda (Shift+Enter)" disabled>↑</button>
           <button type="button" data-search-direction="1" aria-label="Nasledujúca zhoda" title="Nasledujúca zhoda (Enter)" disabled>↓</button>
           <span class="pane-zoom">
+          <label class="operations-toggle" hidden><input type="checkbox" checked> Zobraziť operácie</label>
           <button data-command="out" aria-label="Oddialiť diagram">−</button>
           <button data-command="in" aria-label="Priblížiť diagram">+</button>
           <button data-command="fit">Celý diagram</button>
