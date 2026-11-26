@@ -151,7 +151,7 @@ public sealed class ReaderTray : IDisposable
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
         using (var host = new ReaderTray(portable)) {
             host.Launch(true);
-            host.tray.Visible = true;
+            host.tray.Visible = !portable;
             host.timer.Start();
             Application.Run();
         }

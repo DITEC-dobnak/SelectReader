@@ -274,6 +274,12 @@ test('catalog lists all matches of one required type without an 80-item cutoff',
   assert.equal(result.total, 101);
   assert.equal(result.items.length, 101);
   assert.ok(result.items.every(entry => entry.type === diagram.type));
+  const other = { ...diagram, id:'other-diagram', type:'State Diagram', name:'Other' };
+  reader.entries.set(other.id, other);
+  const all = await (await fetch(`${base}/api/search?kind=diagrams&type=*`)).json();
+  assert.equal(all.items.length, 102);
+  assert.ok(all.items.some(entry => entry.id === other.id));
+  assert.ok(!all.items.some(entry => entry.id === item.id));
   for (const query of ['', '?type=', '?kind=diagrams'])
     assert.equal((await fetch(`${base}/api/search${query}`)).status, 400);
 });

@@ -569,14 +569,16 @@ function renderCatalogControls(diagrams, dictionary) {
   if (kind === 'diagrams') {
     const types = Object.entries(state.types).filter(([type]) => /\bdiagram\b/i.test(type))
       .sort(([a],[b]) => diagramRank(a) - diagramRank(b) || a.localeCompare(b, 'sk'));
+    if (types.length) types.push(['*', diagrams]);
     const selected = types.some(([type]) => type === preferredType) ? preferredType : types[0]?.[0];
     const key = JSON.stringify(types);
     if (group.dataset.key !== key) {
       group.replaceChildren(...types.map(([type,count]) => {
         const button = document.createElement('button'), badge = document.createElement('small');
         button.type = 'button';
-        button.value = button.title = type;
-        button.textContent = type.replace(/^Object Sequence Diagram$/, 'Sequence').replace(/ Diagram$/, '') + ' ';
+        button.value = type;
+        button.title = type === '*' ? 'Všetky typy diagramov' : type;
+        button.textContent = (type === '*' ? 'Všetky' : type.replace(/^Object Sequence Diagram$/, 'Sequence').replace(/ Diagram$/, '')) + ' ';
         badge.textContent = count.toLocaleString('sk');
         button.append(badge);
         return button;

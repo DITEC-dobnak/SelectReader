@@ -7,7 +7,9 @@ Select Reader umožňuje na Windows prezerať diagramy, slovník a prepojenia mo
 1. Na Windows x64 rozbaľ celý `SelectReader-win-x64.zip` do zapisovateľného priečinka a spusti `SelectReader.exe`. Reader sa otvorí v maximalizovanom okne. Potrebuješ Microsoft Edge; Node.js je pribalený.
 2. Klikni na **Vybrať model**, zadaj server, vyber repozitár a model a klikni na **Otvoriť model**. Tvoj účet Windows musí mať prístup k zdieľaniu `\\server\enabler`. Prístup skontroluješ v tom istom dialógu cez **Overiť Windows pripojenie**.
 3. V katalógu prepni medzi **Diagramy** a **Slovník**. Stlač `Ctrl+K` a vyhľadaj položku podľa názvu. V názvoch diagramov môžeš vynechať medzery aj diakritiku: `exportrozhodnuti` nájde aj **Export rozhodnutí**. Kliknutím na prvok diagramu otvoríš jeho detail a prepojenia. Na porovnanie diagramov vyber v ponuke **Rozloženie diagramov** dve alebo štyri okná.
-4. Reader ukončíš zavretím posledného okna. Ak prebieha export, zavretie treba potvrdiť. Možnosť **Ukončiť Reader** nájdeš aj v ponuke ikony pri hodinách.
+4. Prenosný Reader nezobrazuje ikonu pri hodinách. Ukončíš ho zavretím posledného okna. Ak prebieha export, zavretie treba potvrdiť.
+
+V katalógu **Diagramy** zobrazí posledný filter **Všetky** diagramy všetkých typov v jednom zozname. Zapnutím hviezdičky obmedzíš zoznam na obľúbené diagramy.
 
 V diagrame tried Reader uprednostní polohy zo Select Architectu, ak má použiteľné rozmery a triedy sa neprekrývajú. Väzba môže ísť priamo **do boku**, zhora nadol alebo cez uložený ohyb. Reader zobrazuje atribúty aj operácie aj vtedy, keď je ich priehradka v Select Architecte skrytá. Rámik triedy sa prispôsobí celému zalomenému textu.
 

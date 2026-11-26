@@ -347,12 +347,13 @@ export function createServer(reader, cache, {
         if (url.pathname === '/api/history') return json(response, 200, await cache.history());
         if (url.pathname === '/api/search') {
           const type = url.searchParams.get('type');
+          const kind = url.searchParams.get('kind') ?? '';
           if (!type?.trim()) return json(response, 400, { error: 'Vyber konkrétny typ objektu.' });
           const offset = Number(url.searchParams.get('offset') ?? 0);
           if (!Number.isSafeInteger(offset) || offset < 0) return json(response, 400, { error: 'Neplatné stránkovanie.' });
           return json(response, 200, search(reader.entries, reader.details, {
-            query: url.searchParams.get('q') ?? '', kind: url.searchParams.get('kind') ?? '',
-            type, offset, limit: Infinity,
+            query: url.searchParams.get('q') ?? '', kind,
+            type: kind === 'diagrams' && type === '*' ? '' : type, offset, limit: Infinity,
           }));
         }
         if (url.pathname.startsWith('/api/item/')) {
