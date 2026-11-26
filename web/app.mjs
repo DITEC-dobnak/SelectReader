@@ -1517,7 +1517,8 @@ document.addEventListener('keydown', event => {
   }
 });
 poll();
-api('/api/update').then(({available}) => {
+api('/api/update').then(({available, current}) => {
+  if (current) $('app-version').textContent = `v${current}`;
   if (!available) return;
   $('release-version').textContent = available;
   $('release-notice').hidden = false;

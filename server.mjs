@@ -280,6 +280,7 @@ export function createServer(reader, cache, {
   onExit, idleMs = 15000, desktop = false, desktopIdleMs = 2000,
 } = {}) {
   const views = new Set();
+  let packageInfo;
   let releaseCheck;
   let idleTimer, ending = false;
   const finish = command => {
@@ -320,9 +321,10 @@ export function createServer(reader, cache, {
       if (ending) return json(response, 503, {error:'Reader sa ukončuje.'});
       if (request.method === 'GET') {
         if (url.pathname === '/api/update') {
-          releaseCheck ??= readFile(path.join(root, 'package.json'), 'utf8')
-            .then(text => checkRelease(JSON.parse(text).version));
-          return json(response, 200, { available: await releaseCheck });
+          packageInfo ??= readFile(path.join(root, 'package.json'), 'utf8')
+            .then(text => JSON.parse(text));
+          releaseCheck ??= packageInfo.then(info => checkRelease(info.version));
+          return json(response, 200, { available: await releaseCheck, current: (await packageInfo).version });
         }
         if (url.pathname === '/api/health') return json(response, 200, { app: 'select-architect-reader', version: 2, transport: 'direct-tcp' });
         if (url.pathname === '/api/state') {
